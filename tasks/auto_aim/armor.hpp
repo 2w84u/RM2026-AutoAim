@@ -2,6 +2,7 @@
 #define AUTO_AIM__ARMOR_HPP
 
 #include <Eigen/Dense>
+#include <fmt/format.h>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
@@ -121,5 +122,16 @@ struct Armor
 };
 
 }  // namespace auto_aim
+
+template <>
+struct fmt::formatter<auto_aim::ArmorName> : fmt::formatter<std::string_view>
+{
+  template <typename FormatContext>
+  auto format(auto_aim::ArmorName name, FormatContext & ctx) const
+  {
+    return fmt::formatter<std::string_view>::format(
+      auto_aim::ARMOR_NAMES[static_cast<std::size_t>(name)], ctx);
+  }
+};
 
 #endif  // AUTO_AIM__ARMOR_HPP
