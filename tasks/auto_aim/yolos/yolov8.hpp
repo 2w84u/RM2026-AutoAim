@@ -3,9 +3,12 @@
 
 #include <list>
 #include <opencv2/opencv.hpp>
-#include <openvino/openvino.hpp>
 #include <string>
 #include <vector>
+
+#ifdef SPVISION_WITH_OPENVINO
+#include <openvino/openvino.hpp>
+#endif
 
 #include "tasks/auto_aim/armor.hpp"
 #include "tasks/auto_aim/classifier.hpp"
@@ -33,13 +36,17 @@ private:
   std::string save_path_, debug_path_;
   bool debug_, use_roi_;
 
-  const int class_num_ = 2;
+  int class_num_ = 2;
   const float nms_threshold_ = 0.3;
   const float score_threshold_ = 0.7;
   double min_confidence_, binary_threshold_;
 
+  bool use_openvino_ = false;
+  cv::dnn::Net net_;
+#ifdef SPVISION_WITH_OPENVINO
   ov::Core core_;
   ov::CompiledModel compiled_model_;
+#endif
 
   cv::Rect roi_;
   cv::Point2f offset_;

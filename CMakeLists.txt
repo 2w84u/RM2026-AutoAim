@@ -16,14 +16,46 @@ find_package(Eigen3 REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
-# Honor OpenVINO_DIR/CMAKE_PREFIX_PATH from the build environment.
-# Retain the historical default only when it exists.
-if(NOT OpenVINO_DIR AND EXISTS "/opt/intel/openvino_2024.6.0/runtime/cmake")
-  set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake")
+
+# Inference backend selection.
+#   ENABLE_OPENVINO : keep the OpenVINO IR (.xml) inference path compiled in.
+#   ENABLE_CUDA_DNN : allow "device: GPU" to use OpenCV DNN's CUDA backend for
+#                     ONNX models (requires an OpenCV built with CUDA modules).
+option(ENABLE_OPENVINO "Enable OpenVINO IR (.xml) inference backend" ON)
+option(ENABLE_CUDA_DNN "Enable OpenCV DNN CUDA backend for ONNX models" ON)
+
+if(ENABLE_OPENVINO)
+  # Honor OpenVINO_DIR/CMAKE_PREFIX_PATH from the build environment.
+  # Retain the historical default only when it exists.
+  if(NOT OpenVINO_DIR AND EXISTS "/opt/intel/openvino_2024.6.0/runtime/cmake")
+    set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake")
+  endif()
+  find_package(OpenVINO QUIET COMPONENTS Runtime)
 endif()
-find_package(OpenVINO REQUIRED COMPONENTS Runtime)
+
+if(OpenVINO_FOUND)
+  add_compile_definitions(SPVISION_WITH_OPENVINO)
+  message(STATUS "Inference backend: OpenVINO ${OpenVINO_VERSION} (.xml) + OpenCV DNN (.onnx)")
+else()
+  message(STATUS "Inference backend: OpenVINO disabled -> OpenCV DNN (.onnx) only")
+endif()
+
+if(ENABLE_CUDA_DNN)
+  add_compile_definitions(SPVISION_WITH_CUDA_DNN)
+  message(STATUS "Inference backend: OpenCV DNN CUDA enabled for device: GPU")
+endif()
+
 set(FASTCDR_DIR "/opt/ros/humble/lib/cmake/fastcdr/")
 find_package(fastcdr QUIET)
+
+# Probe ROS 2 early so ROS-dependent test targets can be skipped cleanly when
+# the build shell has not sourced /opt/ros/*/setup.bash or sp_msgs is not built.
+find_package(ament_cmake QUIET)
+find_package(rclcpp QUIET)
+find_package(std_msgs QUIET)
+find_package(rosidl_typesupport_cpp QUIET)
+find_package(sp_msgs QUIET)
+find_package(geometry_msgs QUIET)
 
 
 include_directories(${EIGEN3_INCLUDE_DIR})
@@ -161,8 +193,14 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     add_executable(planner_test_offline tests/planner_test_offline.cpp)
     target_link_libraries(planner_test_offline ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 
-    add_executable(gimbal_control_test tests/gimbal_control_test.cpp)
-    target_link_libraries(gimbal_control_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+    if(rclcpp_FOUND AND std_msgs_FOUND AND rosidl_typesupport_cpp_FOUND AND sp_msgs_FOUND)
+      add_executable(gimbal_control_test tests/gimbal_control_test.cpp)
+      target_link_libraries(
+        gimbal_control_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io
+        rclcpp::rclcpp ${std_msgs_TARGETS})
+    else()
+      message(WARNING "ROS2/sp_msgs not found, skipping gimbal_control_test")
+    endif()
 
     if(ENABLE_LEGACY_CBOARD)
       add_executable(cboard_uart_control_test tests/cboard_uart_control_test.cpp)
@@ -172,7 +210,7 @@ if("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
     endif()
 
     add_executable(standard_mpc_test tests/standard_mpc_test.cpp)
-    target_link_libraries(standard_mpc_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
+    target_link_libraries(standard_mpc_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
 
 endif()
 

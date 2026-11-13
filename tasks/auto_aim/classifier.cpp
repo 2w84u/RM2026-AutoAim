@@ -9,9 +9,11 @@ Classifier::Classifier(const std::string & config_path)
   auto yaml = YAML::LoadFile(config_path);
   auto model = yaml["classify_model"].as<std::string>();
   net_ = cv::dnn::readNetFromONNX(model);
+#ifdef SPVISION_WITH_OPENVINO
   auto ovmodel = core_.read_model(model);
   compiled_model_ = core_.compile_model(
     ovmodel, "AUTO", ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+#endif
 }
 
 void Classifier::classify(Armor & armor)
@@ -60,6 +62,10 @@ void Classifier::classify(Armor & armor)
 
 void Classifier::ovclassify(Armor & armor)
 {
+#ifndef SPVISION_WITH_OPENVINO
+  // Built without OpenVINO: the OpenCV DNN path is numerically equivalent.
+  classify(armor);
+#else
   if (armor.pattern.empty()) {
     armor.name = ArmorName::not_armor;
     return;
@@ -109,6 +115,7 @@ void Classifier::ovclassify(Armor & armor)
 
   armor.confidence = confidence;
   armor.name = static_cast<ArmorName>(label_id);
+#endif
 }
 
 }  // namespace auto_aim

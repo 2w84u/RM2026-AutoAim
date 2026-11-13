@@ -6,6 +6,7 @@
 #include <filesystem>
 
 #include "tools/img_tools.hpp"
+#include "tools/infer_backend.hpp"
 #include "tools/logger.hpp"
 
 namespace auto_aim
@@ -30,27 +31,43 @@ YOLO11::YOLO11(const std::string & config_path, bool debug)
 
   save_path_ = "imgs";
   std::filesystem::create_directory(save_path_);
-  auto model = core_.read_model(model_path_);
-  ov::preprocess::PrePostProcessor ppp(model);
-  auto & input = ppp.input();
 
-  input.tensor()
-    .set_element_type(ov::element::u8)
-    .set_shape({1, 640, 640, 3})
-    .set_layout("NHWC")
-    .set_color_format(ov::preprocess::ColorFormat::BGR);
+  // Optional override for models that do not use the default 38 classes.
+  if (yaml["class_num"]) class_num_ = yaml["class_num"].as<int>();
 
-  input.model().set_layout("NCHW");
+  if (tools::is_onnx_model(model_path_)) {
+    // ONNX -> OpenCV DNN (CUDA when device: GPU and ENABLE_CUDA_DNN is on)
+    net_ = cv::dnn::readNetFromONNX(model_path_);
+    tools::configure_dnn_backend(net_, device_);
+  } else {
+    use_openvino_ = true;
+#ifdef SPVISION_WITH_OPENVINO
+    auto model = core_.read_model(model_path_);
+    ov::preprocess::PrePostProcessor ppp(model);
+    auto & input = ppp.input();
 
-  input.preprocess()
-    .convert_element_type(ov::element::f32)
-    .convert_color(ov::preprocess::ColorFormat::RGB)
-    .scale(255.0);
+    input.tensor()
+      .set_element_type(ov::element::u8)
+      .set_shape({1, 640, 640, 3})
+      .set_layout("NHWC")
+      .set_color_format(ov::preprocess::ColorFormat::BGR);
 
-  // TODO: ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY)
-  model = ppp.build();
-  compiled_model_ = core_.compile_model(
-    model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+    input.model().set_layout("NCHW");
+
+    input.preprocess()
+      .convert_element_type(ov::element::f32)
+      .convert_color(ov::preprocess::ColorFormat::RGB)
+      .scale(255.0);
+
+    model = ppp.build();
+    compiled_model_ = core_.compile_model(
+      model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+#else
+    throw std::runtime_error(
+      "OpenVINO backend is disabled at build time; provide an .onnx model for CUDA DNN (got: " +
+      model_path_ + ")");
+#endif
+  }
 }
 
 std::list<Armor> YOLO11::detect(const cv::Mat & raw_img, int frame_count)
@@ -84,17 +101,25 @@ std::list<Armor> YOLO11::detect(const cv::Mat & raw_img, int frame_count)
   auto input = cv::Mat(640, 640, CV_8UC3, cv::Scalar(0, 0, 0));
   auto roi = cv::Rect(0, 0, w, h);
   cv::resize(bgr_img, input(roi), {w, h});
-  ov::Tensor input_tensor(ov::element::u8, {1, 640, 640, 3}, input.data);
 
-  /// infer
-  auto infer_request = compiled_model_.create_infer_request();
-  infer_request.set_input_tensor(input_tensor);
-  infer_request.infer();
+  cv::Mat output;
+  if (use_openvino_) {
+#ifdef SPVISION_WITH_OPENVINO
+    ov::Tensor input_tensor(ov::element::u8, {1, 640, 640, 3}, input.data);
+    auto infer_request = compiled_model_.create_infer_request();
+    infer_request.set_input_tensor(input_tensor);
+    infer_request.infer();
 
-  // postprocess
-  auto output_tensor = infer_request.get_output_tensor();
-  auto output_shape = output_tensor.get_shape();
-  cv::Mat output(output_shape[1], output_shape[2], CV_32F, output_tensor.data());
+    auto output_tensor = infer_request.get_output_tensor();
+    auto output_shape = output_tensor.get_shape();
+    output = cv::Mat(output_shape[1], output_shape[2], CV_32F, output_tensor.data()).clone();
+#endif
+  } else {
+    cv::Mat blob = cv::dnn::blobFromImage(input, 1.0 / 255.0, cv::Size(), cv::Scalar(), true);
+    net_.setInput(blob);
+    cv::Mat out = net_.forward();
+    output = out.reshape(1, out.size[1]);
+  }
 
   return parse(scale, output, raw_img, frame_count);
 }
@@ -111,7 +136,7 @@ std::list<Armor> YOLO11::parse(
   for (int r = 0; r < output.rows; r++) {
     auto xywh = output.row(r).colRange(0, 4);
     auto scores = output.row(r).colRange(4, 4 + class_num_);
-    auto one_key_points = output.row(r).colRange(4 + class_num_, 50);
+    auto one_key_points = output.row(r).colRange(4 + class_num_, 4 + class_num_ + 8);
 
     std::vector<cv::Point2f> armor_key_points;
 

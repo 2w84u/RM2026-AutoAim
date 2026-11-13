@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-find_package(OpenVINO REQUIRED)
+find_package(OpenVINO QUIET)
 find_package(Ceres REQUIRED)
 
 add_library(auto_buff OBJECT 
@@ -11,4 +11,8 @@ add_library(auto_buff OBJECT
     yolo11_buff.cpp
 )
 
-target_link_libraries(auto_buff auto_aim openvino::runtime ${CERES_LIBRARIES})
+if(OpenVINO_FOUND)
+  target_link_libraries(auto_buff auto_aim openvino::runtime ${CERES_LIBRARIES})
+else()
+  target_link_libraries(auto_buff auto_aim ${CERES_LIBRARIES})
+endif()

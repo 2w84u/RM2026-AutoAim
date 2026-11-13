@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-find_package(OpenVINO REQUIRED COMPONENTS Runtime)
+find_package(OpenVINO QUIET COMPONENTS Runtime)
 
 add_subdirectory(planner/tinympc)
 
@@ -26,4 +26,8 @@ if(ENABLE_LEGACY_CBOARD)
   target_sources(auto_aim PRIVATE multithread/commandgener.cpp)
 endif()
 
-target_link_libraries(auto_aim io openvino::runtime tinympcstatic)
+if(OpenVINO_FOUND)
+  target_link_libraries(auto_aim io openvino::runtime tinympcstatic)
+else()
+  target_link_libraries(auto_aim io tinympcstatic)
+endif()
