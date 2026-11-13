@@ -1,228 +1,148 @@
-# IR → ONNX 反向转换详细流程（方案 2）
+# OpenVINO IR → ONNX：已实施的转换流程
 
-> 目标：把 `assets/` 里只有 OpenVINO IR（`.xml` + `.bin`）的 YOLO 模型转回 ONNX，
-> 以便在 Jetson 上用 OpenCV DNN（CUDA）运行。
->
-> 仓库已提供转换脚本：`tools/ir2onnx.py`
-> 建议在 **x86 Ubuntu 22.04** 上完成转换与验证，Jetson 只做最终部署验证。
+仓库的四个 IR 均已生成 ONNX，并在 x86 CPU 上通过 ONNX checker、ONNX Runtime 和
+OpenCV DNN 4.10 的加载及前向检查。转换器为 `tools/ir2onnx.py`。
 
-## 0 先明确“有损”在哪里
+**可行范围：转换和浮点图执行已验证；原 INT8 模型的检测精度保持、Jetson CUDA/FP16
+仍未验证。** `--fq drop` 会改变模型行为，不能按“误差通常很小”直接验收。
 
-| 来源 | 说明 | 影响 |
-|---|---|---|
-| 卷积权重 | IR 里本来就是 **INT8 量化**权重（`yolo11.xml`：96 个 `i8` 张量，≈2.5 MB），图中用 `Convert(i8→f32) → Multiply(per-channel scale)` 反量化 | 只能还原“量化后”的精度，不会恢复原始 FP32 训练权重 |
-| 激活量化 | IR 中有 110 个 `FakeQuantize`（`levels=256`） | 默认 `--fq drop` 时忽略模拟量化，通常只带来很小误差；`--fq exact` 可保留 |
-| 图结构 | IR 已把 NMS 之前的 decode（DFL、anchor、stride）固化进图 | 输出就是 `(1, 4+nc+8, N)`，与仓库适配器一致，不需要额外解码 |
+## 1 产物与接入
 
-**结论：转换后是“量化版浮点模型”，精度通常接近原 INT8 模型，低于原 FP32 模型。**
-
-## 1 环境准备（x86）
-
-```bash
-python3 -m venv ~/ir2onnx && source ~/ir2onnx/bin/activate
-pip install numpy onnx onnxruntime openvino==2024.6.0 onnxsim
-```
-
-- `openvino` 只用于读取 IR 做数值对齐，版本与生成 IR 时一致最稳（本仓库为 2024.6）
-- Jetson 上没有官方 x86 包时不必装，转换产物直接拷贝过去即可
-
-## 2 转换步骤
-
-### 2.1 自检（不需要 onnx，可直接在任何机器跑）
-
-```bash
-python3 tools/ir2onnx.py assets/yolo11.xml --inspect
-```
-
-本仓库四个模型的自检结果（已在本机验证通过）：
-
-| 模型 | 输入 | 输出 | Conv 数 | 权重+常量 |
+| IR 来源 | 已生成 ONNX | 输入 NCHW | 输出 | 大小 MiB |
 |---|---|---|---|---|
-| `yolo11.xml` | 1×3×640×640 | 1×**50**×8400（38 类 + 4 关键点） | 97 | ≈12.9 MB |
-| `yolo11_buff_int8.xml` | 1×3×640×640 | 1×**17**×8400（1 类 + 6 关键点） | 97 | ≈12.9 MB |
-| `yolov8.xml` | 1×3×**416**×416 | 1×**14**×3549（2 类 + 4 关键点） | 92 | ≈11.5 MB |
-| `yolov5.xml` | 1×3×640×640 | 1×**25200×22**（旧格式） | 61 | ≈5.6 MB |
+| `assets/yolo11.xml` | `assets/yolo11_dnn.onnx` | 1×3×640×640 | 1×50×8400 | 10.38 |
+| `assets/yolo11_buff_int8.xml` | `assets/yolo11_buff_int8.onnx` | 1×3×640×640 | 1×17×8400 | 10.35 |
+| `assets/yolov8.xml` | `assets/yolov8.onnx` | 1×3×416×416 | 1×14×3549 | 13.00 |
+| `assets/yolov5.xml` | `assets/yolov5.onnx` | 1×3×640×640 | 1×25200×22 | 5.44 |
 
-自检必须没有 `未支持算子` 和 `权重无法折叠为常量` 两类告警。
+以上均使用 `--fq drop --opset 13`，权重反量化后存为浮点 initializer，不是 INT8 ONNX。
+`yolo11` 是 38 类和 4 个关键点，`yolov8` 是 2 类和 4 个关键点；能量机关模型是
+1 类和 6 个关键点。`yolov5` 保留旧版 22 列布局，不按上述公式解码。
 
-### 2.2 转换
+新增 [configs/jetson-ir.yaml](../configs/jetson-ir.yaml)，使用 `yolo11_dnn.onnx` 和
+`class_num: 38`。原 `configs/jetson.yaml` 继续使用已有的 3 类 `best2-sim.onnx`。
+切换到 `yolov8` 时要同时设置 `yolo_name: yolov8` 和 `class_num: 2`。
+能量机关配置中的 `model` 可改为 `assets/yolo11_buff_int8.onnx`。
 
-```bash
-mkdir -p out
-python3 tools/ir2onnx.py assets/yolo11.xml out/yolo11.onnx --fq drop
-# 需要更接近 IR 数值时：
-python3 tools/ir2onnx.py assets/yolo11.xml out/yolo11_exact.onnx --fq exact
-```
-
-脚本会调用 `onnx.checker.check_model()` 并在成功时打印节点数、initializer 数和文件大小。
-
-## 3 转换原理（排错时看）
-
-### 3.1 IR 文件结构
-
-- `.xml`：`<layers>` 中每个 `<layer id type name>` 有 `<data>`（属性）、`<input><port>`、`<output><port>`；
-  `<edges>` 描述 `from-layer/from-port → to-layer/to-port`
-- `.bin`：所有 `Const` 张量的原始字节，XML 中通过 `offset` + `size` 定位；
-  `element_type` 为 `f32/f16/i8/u8/i32/i64/boolean`
-
-### 3.2 权重反量化链（必须折叠）
-
-```
-Const(i8, [16,3,3,3]) → Convert(to f32) → Multiply(Const f32 [16,1,1,1]) → Convolution
-```
-
-`tools/ir2onnx.py` 的 `const_value()` 会递归求值所有输入均为常量的子图
-（`Convert/Multiply/Add/Subtract/Divide/Reshape/Transpose/Concat/Gather/ShapeOf/
-Slice/StridedSlice/Mod/Greater`），把整条链折叠成**一个 f32 initializer**。
-若这一步失败，Conv 的权重就不是常量，OpenCV DNN 无法加载。
-
-### 3.3 静态 shape 分支
-
-DFL/decode 部分包含 `ShapeOf → Gather → Mod → Greater → StridedSlice` 的 shape 计算。
-由于输入固定为 1×3×H×W，脚本直接用 XML 里每个 port 的 `<dim>` 作为 `ShapeOf` 的值，
-整条分支会折叠为常量，最终只剩 `Reshape` 需要的常量 shape。
-
-### 3.4 FakeQuantize
-
-- `--fq drop`（默认）：视为恒等，直接让输出复用输入 tensor（OpenCV DNN 兼容性最好）
-- `--fq exact`：按 OpenVINO 语义展开为
-  `Clip((x-low)/step) → Round → *step_out + output_low`
-  （需要 OpenCV DNN 支持 `Round`，若加载失败就换回 `drop`）
-
-## 4 算子映射表
-
-脚本已覆盖这四个 IR 中出现的全部算子：
-
-| IR 算子 | ONNX 实现 | 关键属性/注意事项 |
-|---|---|---|
-| `Parameter` / `Result` | 图输入 / 输出 | 输入名固定为 `input`，f32 NCHW |
-| `Const` | initializer | 按 `offset/size` 读取，按内容去重 |
-| `Convolution` | `Conv` | `pads = pads_begin + pads_end`（ONNX 顺序 `[t,l,b,r]`） |
-| `GroupConvolution` | `Conv(group=G)` | 权重 `[G, C/G, kH, kW]` → reshape 为 `[G*(C/G), C/G, kH, kW]` |
-| `Convert` | `Cast` | 只在非常量分支出现 |
-| `FakeQuantize` | 恒等 / 算术展开 | 见 3.4 |
-| `Add/Subtract/Multiply/Divide` | 同名 | numpy 广播 |
-| `Sigmoid` | `Sigmoid` | — |
-| `Swish` | `Sigmoid` + `Mul` | `beta≠1` 时先乘 beta |
-| `ReLU` | `Relu` | — |
-| `HSigmoid` | `Add(3) → Clip(0,6) → Div(6)` | 不用 HardSigmoid，兼容性更好 |
-| `HSwish` | `x * HSigmoid(x)` | 同上 |
-| `Concat` | `Concat` | `axis` 属性 |
-| `Reshape` | `Reshape` | 直接使用 XML 输出 dim，规避 `special_zero` |
-| `VariadicSplit` | `Split` | `split` 作为第二个输入（opset 13） |
-| `MaxPool` | `MaxPool` | `rounding_type=ceil → ceil_mode=1` |
-| `MatMul` | `MatMul` | `transpose_a/b` 转成前置 `Transpose`（4D 用 `[0,1,3,2]`） |
-| `SoftMax` | `Softmax` | `axis` 属性（本仓库为 -1） |
-| `Interpolate` | `Resize` | `nearest` + `asymmetric` + `floor`；scales 按 axes 展开到整图 rank |
-| `Transpose` | `Transpose` | `perm` 来自常量输入 |
-| `StridedSlice` | `Slice` | 掩码为 1 的轴直接跳过 |
-| `Slice` | `Slice` | IR 输入顺序 `start, stop, step, axes` → ONNX `starts, ends, axes, steps` |
-| `Mod` | `Mod(fmod=0)` | 整数取模（shape 计算） |
-| `Greater` | `Greater` | — |
-| `Gather` | `Gather` | `axis`、`batch_dims` |
-| `ShapeOf` | `Shape`(+`Cast`) | 静态 shape 下会被折叠掉 |
-| `ReduceMean` | `ReduceMean` | `axes` 用属性（opset ≤ 17），`keepdims` |
-
-> 若还有其他模型出现新算子，只需在 `SUPPORTED_EMIT` 与 `_emit()` 中补一项。
-
-## 5 验证（三级，必须逐级通过）
-
-### 5.1 IR vs ONNX 数值对齐
-
-```python
-import numpy as np, openvino as ov, onnxruntime as ort
-
-x = np.random.rand(1, 3, 640, 640).astype(np.float32) * 255
-
-ir_out = ov.Core().compile_model('assets/yolo11.xml', 'CPU')([x])[0]
-sess = ort.InferenceSession('out/yolo11.onnx', providers=['CPUExecutionProvider'])
-onnx_out = sess.run(None, {'input': x})[0]
-
-print('shape:', ir_out.shape, onnx_out.shape)      # 都应为 (1, 50, 8400)
-print('max abs diff:', np.abs(ir_out - onnx_out).max())
-```
-
-判定标准：
-
-- `--fq exact`：`max abs diff` 应在 `1e-4 ~ 1e-3` 量级
-- `--fq drop`：差异略大（量化舍入），建议再比较**检测结果**：
-  取两条输出置信度 > 0.7 的列，比较框的 IoU 与类别 id；应完全一致或 IoU > 0.95
-- 若差异很大：检查 `Resize` 的插值模式、`MatMul` 转置、`pads` 顺序、`Split` 轴
-
-### 5.2 OpenCV DNN 加载
-
-```python
-import cv2, numpy as np
-net = cv2.dnn.readNetFromONNX('out/yolo11.onnx')
-img = np.zeros((640, 640, 3), np.uint8)
-net.setInput(cv2.dnn.blobFromImage(img, 1/255.0, (640, 640), swapRB=True))
-print(net.forward().shape)   # 期望 (1, 50, 8400)
-```
-
-- 在 x86 上只验证“能加载并前向”
-- 最终目标机是 Jetson 的系统 OpenCV 4.10（带 CUDA），务必在板子上再跑一次
-- 若报 `Unsupported layer`：先试 `onnxsim out/yolo11.onnx out/yolo11_sim.onnx`，
-  再检查是否用了 `Round`（换 `--fq drop`）
-
-### 5.3 接入本仓库
+在实际 Jetson、已构建对应可执行文件且有本地视频时执行：
 
 ```bash
-cp out/yolo11.onnx assets/yolo11_dnn.onnx
+./build/detector_video_test --config-path=configs/jetson-ir.yaml match.avi --tradition=false
 ```
 
-配置（参考 `configs/jetson.yaml`）：
+CUDA 构建和后端条件见 [Jetson 构建说明](jetson-cuda-build.md)。启动日志应出现
+`[infer] OpenCV DNN CUDA FP16 backend enabled`；出现 CPU 回退日志不能算 CUDA 验证通过。
+本次未运行 Jetson 或完整 C++ 检测程序。
 
-```yaml
-yolo_name: yolo11
-yolo11_model_path: assets/yolo11_dnn.onnx
-device: GPU
-class_num: 38        # yolo11.xml 是 38 类
-```
+## 2 环境与复现
+
+实测环境为 x86_64、Python 3.11、NumPy 1.26.4、ONNX 1.17.0、ONNX Runtime 1.20.1、
+OpenVINO 2024.6.0、OpenCV 4.10.0。依赖已锁定在
+[tools/requirements-ir2onnx.txt](../tools/requirements-ir2onnx.txt)。
+OpenVINO 只在 `--validate` 时需要；单独转换仅依赖 NumPy 和 ONNX。
 
 ```bash
-./build/detector_video_test --config-path=configs/jetson.yaml match.avi --tradition=false
+# 在仓库根目录，使用 Python 3.11 创建独立环境
+python3.11 -m venv .venv-ir2onnx
+source .venv-ir2onnx/bin/activate
+python -m pip install -r tools/requirements-ir2onnx.txt
+
+# 只解析并检查算子与卷积权重；不需要安装 onnx
+python tools/ir2onnx.py assets/yolo11.xml --inspect
+
+# 转换并用同一张图片验证，报告目录自动创建
+python tools/ir2onnx.py assets/yolo11.xml assets/yolo11_dnn.onnx \
+  --fq drop --validate --image assets/standard_fanblade.jpg \
+  --report out/ir2onnx/yolo11.json
+
+for model in yolo11_buff_int8 yolov8 yolov5; do
+  python tools/ir2onnx.py "assets/${model}.xml" "assets/${model}.onnx" \
+    --fq drop --validate --image assets/standard_fanblade.jpg \
+    --report "out/ir2onnx/${model}.json" || break
+done
 ```
 
-日志出现 `[infer] OpenCV DNN CUDA FP16 backend enabled` 即成功；再对比
-IR（OpenVINO CPU）与 ONNX（CUDA）在同一段视频上的检测框，确认无系统偏移。
+本次已创建 `.venv-ir2onnx/`，可直接用 `.venv-ir2onnx/bin/python` 执行上述命令。
+`--bin` 可指定独立权重路径；`--opset` 支持 13～17，已验证的是默认 13。
+自检遇到未覆盖算子或无法折叠的卷积权重时返回非零状态。
 
-## 6 常见问题
+`--image` 沿用项目预处理：保持比例缩放、左上对齐、右侧/下侧补零、BGR 转 RGB，
+然后转换为 float32 NCHW 并除以 255。**模型输入范围是 0～1，不要再乘 255。**
+不指定图片时使用固定种子的 `[0, 1)` 随机输入。
 
-| 现象 | 可能原因 | 处理 |
-|---|---|---|
-| `未支持算子: {...}` | 脚本缺映射 | 在 `SUPPORTED_EMIT`/`_emit()` 补；先看 `--inspect` |
-| `Conv ... 权重无法折叠为常量` | 反量化链里有未实现算子 | 检查该 Conv 权重输入的 `Convert/Multiply` 链 |
-| `无法解析 tensor` | 某常量分支未折叠（多为 shape 分支） | 检查 `ShapeOf/Gather/StridedSlice/Mod/Greater` |
-| ONNX 能建但 ORT 报 shape 错 | `Reshape/Split` 常量不对 | 用 XML 输出 dim 作为 Reshape 目标 |
-| 输出通道数不对 | `class_num` 或模型选错 | 用 `--inspect` 确认输出 shape |
-| OpenCV 输出全 0/异常 | 某层 OpenCV 不支持或语义不同 | 逐层对比（见 6.1） |
+## 3 实测结果与验收含义
 
-### 6.1 逐层定位
+2026-11-13，使用仓库的 `assets/standard_fanblade.jpg` 和上述版本得到以下结果。
+所有数值都是整份原始输出的最大绝对误差，包含低置信度候选的坐标和关键点。
 
-把中间 tensor 加为 IR 的输出，再与 ONNXRuntime 的同名中间结果比较：
+| 模型 | 去 FQ 并折叠常量的 IR vs ORT | ORT vs OpenCV CPU | 原始 IR vs ORT |
+|---|---:|---:|---:|
+| yolo11 | 0.000717 | 0.001251 | 44.664948 |
+| yolo11_buff_int8 | 0.005798 | 0.002869 | 129.252136 |
+| yolov8 | 0.000397 | 0.001411 | 56.524719 |
+| yolov5 | 0.001602 | 0.003326 | 0.001602 |
 
-```python
-import openvino as ov
-m = ov.Core().read_model('assets/yolo11.xml')
-m.add_outputs(['<XML 中 port 的 names 属性>'])   # 例如 '1351'
-cm = ov.Core().compile_model(m, 'CPU')
+原始报告见 [out/ir2onnx](../out/ir2onnx)。其中：
+
+- `ir_vs_ort` 始终比较**原始 IR** 与导出模型，保留量化移除的实际影响。
+- `ir_without_fq_vs_ort` 比较同样去掉 FQ、折叠权重常量后的浮点 IR，用于检查转换映射。
+  提前折叠也避免 OpenVINO CPU 继续对反量化权重链执行低精度融合，混淆比较基准。
+- `ort_vs_opencv` 检查同一 ONNX 在两种 CPU 执行器中的差异。
+- `checks` 保存各项结果。`drop` 模式的 `validation_passed` 要求浮点 IR/ORT 和
+  ORT/OpenCV 均满足逐元素 `atol=1e-2, rtol=1e-3`，并检查输出数量、形状及有限值。
+  它**不表示原始 INT8 IR 数值对齐或检测精度已经通过**。
+- 数值对齐未通过时，脚本仍保留 ONNX 和 JSON 报告，但返回状态 1；所有报告均标记
+  `accuracy_validated: false`。
+
+本次图片在原能量机关 IR 和导出模型中均没有置信度超过 0.7 的候选，不能用它证明
+真实目标的框、类别和关键点保持一致。还需要同一段有目标的视频或标注数据，比较
+NMS 后的框 IoU、类别、置信度和关键点误差，再决定是否替换实际使用的模型。
+
+## 4 量化处理与 exact 模式
+
+`yolo11`、能量机关和 `yolov8` 包含 INT8 权重反量化及激活 `FakeQuantize`。
+`yolov5` 的权重主要为 FP16，且没有 FQ；不能把这四个模型都称为 INT8 模型。
+IR 元数据记录的生成版本分别为 2024.2、2025.2、2024.0、2023.3；本次均用
+OpenVINO 2024.6 读取成功，该版本是验证环境版本，不是所有模型的生成版本。
+
+- `--fq drop`：权重反量化后折叠为浮点常量，激活 FQ 视为恒等。兼容性已验证，
+  但不能恢复原 FP32 训练权重，也不能保证原 INT8 模型的检测精度。
+- `--fq exact`：按 FQ 公式展开浮点算术、Clip 和 Round，保留模拟量化。
+  当前只支持 `input_high > input_low` 的量化区间。`exact` 表示采用量化公式，
+  **不保证不同执行器间逐位一致**。
+
+FQ 运算和舍入语义参考 [OpenVINO FQ 文档](https://docs.openvino.ai/2024/documentation/openvino-ir-format/operation-sets/operation-specs/quantization/fake-quantize-1.html)
+及 [2024.6 参考实现](https://github.com/openvinotoolkit/openvino/blob/2024.6.0/src/core/reference/include/openvino/reference/fake_quantize.hpp)。
+深层量化图中的浮点误差可能跨越舍入阈值；原 IR 的 CPU 量化内核与展开图也可能不同，
+不能以公式一致推断整个检测头输出一致。
+
+```bash
+# 实验模式：此次 yolo11 的数值验收失败，预期返回 1
+python tools/ir2onnx.py assets/yolo11.xml out/ir2onnx/yolo11_exact.onnx \
+  --fq exact --validate --image assets/standard_fanblade.jpg \
+  --report out/ir2onnx/yolo11_exact.json
 ```
 
-ONNX 侧把对应节点输出加入 `graph.output` 即可（或用 `onnx.helper` 临时改图）。
+该模式实测原 IR/ORT 最大误差为 19.720398，ORT/OpenCV 为 15.285400，未达到原方案
+声称的 `1e-4～1e-3`。因此仅保留为实验入口，不作为 Jetson 默认产物；详细结果见
+[yolo11_exact.json](../out/ir2onnx/yolo11_exact.json)。
 
-## 7 风险与工作量
+## 5 转换器的关键修正与边界
 
-| 项 | 评估 |
+本次修复了会阻止原脚本运行或导致错误图的映射：
+
+| 项目 | 已实施处理 |
 |---|---|
-| 本机已完成的验证 | IR 解析、常量折叠、算子覆盖、IO 形状（`--inspect` 全绿） |
-| 还需在 x86 完成 | 安装 onnx/openvino → 实际生成 ONNX → 数值对齐 → `onnxsim` |
-| 预计调试时间 | 0.5 ~ 1 天（主要耗在数值对齐与 OpenCV DNN 算子兼容） |
-| 主要风险 | ① FQ 丢弃导致精度略降；② OpenCV DNN 对部分算子支持有限；③ 仅能还原量化模型 |
-| 更优替代 | 找到原始 `.pt` 直接 `export(format="onnx")`，无损且几分钟完成 |
+| 算术节点 | IR `Multiply/Subtract/Divide` 分别映射到 ONNX `Mul/Sub/Div` |
+| Gather / VariadicSplit | 从常量输入读取轴；Gather 的轴不作为 ONNX 输入 |
+| Split 长度 | 转为 int64，解析 `-1`；保留多输出端口映射 |
+| 常量折叠 | 修正 Slice/StridedSlice 的输入索引，以及整数 Divide 的 dtype/取整 |
+| Conv / GroupConv | 显式导出 kernel_shape，折叠反量化权重；GroupConv 重排权重 |
+| FQ | 标量 Clip 上下界，按原公式运算顺序展开 |
+| 导出 | 保留零维常量、裁剪未使用的 initializer、完整 ONNX checker、自动创建目录 |
+| 验证 | 同一预处理输入、浮点 IR 基准、ORT/OpenCV 前向、JSON 和失败退出状态 |
 
-## 8 已知限制
-
-- `yolov5.xml` 输出是旧格式 `(1, 25200, 22)`，仓库 `yolov5` 适配器的 `parse()` 按
-  固定列号解析，可继续用，但建议迁移到 yolo11 适配器
-- `yolov8.xml` 输入是 416，适配器也硬编码 416；若要 640 需改代码或重新训练
-- 转换后的模型仍需要正确设置 `class_num`（38 / 2 / 3 等），否则 `parse()` 解列会错位
+这是针对仓库四个模型的静态图转换器。ShapeOf 和 Reshape 使用 XML 中的静态形状，
+不能把输入尺寸改为动态，也不会补回训练图、原始高精度权重或额外 NMS。
+新增模型出现未知算子、复杂切片掩码或 Gather 的非零 batch_dims 时需要另外适配。
+本次四个产物已能直接由 OpenCV 加载，没有引入 onnxsim 作为必要步骤。

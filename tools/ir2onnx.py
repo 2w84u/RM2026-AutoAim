@@ -20,17 +20,22 @@ OpenVINO 只提供 ONNX/TF/Paddle -> IR 的单向转换，没有官方反向导�
   # 转换
   python3 tools/ir2onnx.py assets/yolo11.xml assets/yolo11.onnx --fq drop
 
+  # 同一图片对比 IR / ONNX Runtime / OpenCV DNN CPU，保存数值报告
+  python3 tools/ir2onnx.py assets/yolo11.xml assets/yolo11_dnn.onnx --validate \
+    --image assets/standard_fanblade.jpg --report out/ir2onnx/yolo11.json
+
 依赖
 ----
   numpy；转换时额外需要 onnx（pip install onnx）
 
 注意
 ----
-转换是"有损"的：IR 内的卷积权重本身就是 INT8 量化后反量化的结果，精度只会
-保持/略低于原量化模型，不会恢复原始 FP32 训练权重。
+INT8 IR 无法恢复原始 FP32 训练权重。--fq drop 还会移除激活量化，精度变化
+必须用实际数据评估，不能仅凭图结构或随机输入保证。
 """
 
 import argparse
+import json
 import os
 import sys
 from collections import Counter
@@ -171,6 +176,10 @@ class IRModel:
     if t == 'Subtract':
       return vals[0] - vals[1]
     if t == 'Divide':
+      if np.issubdtype(vals[0].dtype, np.integer):
+        if a.get('m_pythondiv', 'true') == 'true':
+          return np.floor_divide(vals[0], vals[1])
+        return np.trunc(vals[0] / vals[1]).astype(vals[0].dtype)
       return vals[0] / vals[1]
     if t == 'Mod':
       return np.mod(vals[0], vals[1])
@@ -183,7 +192,7 @@ class IRModel:
     if t == 'Concat':
       return np.concatenate(vals, axis=int(a.get('axis', 0)))
     if t == 'Gather':
-      axis = int(a.get('axis', 0))
+      axis = int(vals[2].item())
       batch = int(a.get('batch_dims', 0))
       if batch:
         raise NotImplementedError('Gather batch_dims>0')
@@ -192,19 +201,20 @@ class IRModel:
       dtype = np.int64 if a.get('output_type', 'i64') == 'i64' else np.int32
       return np.array(self.in_dims(lid, 0), dtype=dtype)
     if t == 'Slice':
-      start, stop, step, axes = [v.astype(int).tolist() for v in vals[:4]]
+      start, stop, step = [v.astype(int).reshape(-1).tolist() for v in vals[1:4]]
+      axes = vals[4].astype(int).reshape(-1).tolist() if len(vals) > 4 else range(len(start))
       idx = [slice(None)] * vals[0].ndim
       for s, e, st, ax in zip(start, stop, step, axes):
         idx[ax] = slice(s, e, st)
       return vals[0][tuple(idx)]
     if t == 'StridedSlice':
-      begin, end, strides = [v.astype(int).tolist() for v in vals[:3]]
+      begin, end, strides = [v.astype(int).reshape(-1).tolist() for v in vals[1:4]]
       bm = [int(x) for x in a.get('begin_mask', '').split(',') if x != '']
       em = [int(x) for x in a.get('end_mask', '').split(',') if x != '']
       idx = []
       for i in range(vals[0].ndim):
-        lo = None if (i < len(bm) and bm[i]) else begin[i]
-        hi = None if (i < len(em) and em[i]) else end[i]
+        lo = None if i >= len(begin) or (i < len(bm) and bm[i]) else begin[i]
+        hi = None if i >= len(end) or (i < len(em) and em[i]) else end[i]
         st = strides[i] if i < len(strides) else 1
         idx.append(slice(lo, hi, st))
       return vals[0][tuple(idx)]
@@ -232,18 +242,21 @@ def inspect(ir):
       print('output :', ir.out_dims(src[0]))
   n_conv = 0
   bytes_total = 0
+  valid = not unknown
   for lid in ir.order:
     if ir.type(lid) in ('Convolution', 'GroupConvolution'):
       n_conv += 1
       wkey = ir.src(ir.in_keys(lid)[1])
       w = ir.const_value(wkey)
       if w is None:
+        valid = False
         print('!! Conv %s 的权重无法折叠为常量' % ir.name(lid))
       else:
         bytes_total += w.nbytes
     if ir.type(lid) == 'Const':
       bytes_total += ir.read_const(lid).nbytes
   print('conv   :', n_conv, '个，权重+常量约 %.2f MB' % (bytes_total / 1024 / 1024))
+  return valid
 
 
 class Builder:
@@ -277,7 +290,8 @@ class Builder:
     if key in self.init_cache:
       return self.init_cache[key]
     name = self._name('const')
-    self.inits.append(self.numpy_helper.from_array(np.ascontiguousarray(arr), name))
+    # ascontiguousarray 会把标量提升为 [1]，而 ONNX Clip 要求标量上下界。
+    self.inits.append(self.numpy_helper.from_array(np.array(arr, copy=True, order='C'), name))
     self.init_cache[key] = name
     return name
 
@@ -327,6 +341,9 @@ class Builder:
         raise NotImplementedError('emit op %s (%s)' % (t, ir.name(lid)))
       self._emit(lid, t)
 
+    used = {name for node in self.nodes for name in node.input}
+    used.update(value.name for value in self.outputs)
+    self.inits = [value for value in self.inits if value.name in used]
     graph = self.helper.make_graph(
       self.nodes, os.path.basename(self.ir.xml_path), self.inputs, self.outputs, self.inits)
     model = self.helper.make_model(graph, opset_imports=[self.helper.make_opsetid('', self.opset)])
@@ -350,19 +367,24 @@ class Builder:
       ih = ir.const_value(ir.src(ir.in_key(lid, 2)))
       ol = ir.const_value(ir.src(ir.in_key(lid, 3)))
       oh = ir.const_value(ir.src(ir.in_key(lid, 4)))
-      step_in = self._init(((ih - il) / (levels - 1)).astype(np.float32))
-      step_out = self._init(((oh - ol) / (levels - 1)).astype(np.float32))
-      lo = self._init(np.zeros_like(il, dtype=np.float32))
-      hi = self._init(np.full_like(il, levels - 1, dtype=np.float32))
+      if levels < 2 or np.any(ih <= il):
+        raise ValueError('FakeQuantize 仅支持 levels >= 2 且 input_high > input_low')
+      range_in = self._init((ih - il).astype(np.float32))
+      range_out = self._init((oh - ol).astype(np.float32))
+      count = self._init(np.array(levels - 1, dtype=np.float32))
+      lo = self._init(np.array(0, dtype=np.float32))
+      hi = self._init(np.array(levels - 1, dtype=np.float32))
       il_n, ol_n = self._init(il.astype(np.float32)), self._init(ol.astype(np.float32))
-      n1, n2, n3, n4, n5 = [self._name('fq') for _ in range(5)]
+      n1, n2, n3, n4, n5, n6, n7 = [self._name('fq') for _ in range(7)]
       self.nodes += [
         H.make_node('Sub', [ins[0], il_n], [n1]),
-        H.make_node('Div', [n1, step_in], [n2]),
-        H.make_node('Clip', [n2, lo, hi], [n3]),
-        H.make_node('Round', [n3], [n4]),
-        H.make_node('Mul', [n4, step_out], [n5]),
-        H.make_node('Add', [n5, ol_n], [out]),
+        H.make_node('Div', [n1, range_in], [n2]),
+        H.make_node('Mul', [n2, count], [n3]),
+        H.make_node('Clip', [n3, lo, hi], [n4]),
+        H.make_node('Round', [n4], [n5]),
+        H.make_node('Div', [n5, count], [n6]),
+        H.make_node('Mul', [n6, range_out], [n7]),
+        H.make_node('Add', [n7, ol_n], [out]),
       ]
       self.tensor[ir.out_key(lid)] = out
       return
@@ -376,6 +398,7 @@ class Builder:
         raise RuntimeError('Conv %s 的权重不是常量，无法导出' % ir.name(lid))
       node = H.make_node(
         'Conv', ins, [out],
+        kernel_shape=list(w.shape[2:]),
         strides=[int(x) for x in a.get('strides', '1, 1').split(',')],
         dilations=[int(x) for x in a.get('dilations', '1, 1').split(',')],
         pads=self._pads(a), group=1)
@@ -386,11 +409,13 @@ class Builder:
       ins = [ins[0], self._init(w)]
       node = H.make_node(
         'Conv', ins, [out],
+        kernel_shape=list(w.shape[2:]),
         strides=[int(x) for x in a.get('strides', '1, 1').split(',')],
         dilations=[int(x) for x in a.get('dilations', '1, 1').split(',')],
         pads=self._pads(a), group=g)
     elif t in ('Add', 'Multiply', 'Subtract', 'Divide'):
-      node = H.make_node(t, ins, [out])
+      op = {'Add': 'Add', 'Multiply': 'Mul', 'Subtract': 'Sub', 'Divide': 'Div'}[t]
+      node = H.make_node(op, ins, [out])
     elif t == 'Sigmoid':
       node = H.make_node('Sigmoid', ins, [out])
     elif t == 'ReLU':
@@ -431,10 +456,14 @@ class Builder:
       shape = self._init(np.array(ir.out_dims(lid), dtype=np.int64))
       node = H.make_node('Reshape', [ins[0], shape], [out])
     elif t == 'VariadicSplit':
-      axis = int(a.get('axis', 0))
+      axis = int(ir.const_value(ir.src(ir.in_key(lid, 1))).item())
+      lengths = ir.const_value(ir.src(ir.in_key(lid, 2))).astype(np.int64)
+      if np.any(lengths == -1):
+        lengths = lengths.copy()
+        lengths[lengths == -1] = ir.in_dims(lid, 0)[axis] - lengths[lengths != -1].sum()
       n_out = len(ir.layer(lid).findall('output/port'))
       outs = [self._name('split') for _ in range(n_out)]
-      node = H.make_node('Split', [ins[0], ins[2]], outs, axis=axis)
+      node = H.make_node('Split', [ins[0], self._init(lengths)], outs, axis=axis)
       self.nodes.append(node)
       for p, n in zip(ir.layer(lid).findall('output/port'), outs):
         self.tensor[(lid, p.get('id'))] = n
@@ -511,7 +540,10 @@ class Builder:
     elif t == 'Greater':
       node = H.make_node('Greater', ins, [out])
     elif t == 'Gather':
-      node = H.make_node('Gather', ins, [out], axis=int(a.get('axis', 0)))
+      if int(a.get('batch_dims', 0)):
+        raise NotImplementedError('Gather batch_dims != 0')
+      axis = int(ir.const_value(ir.src(ir.in_key(lid, 2))).item())
+      node = H.make_node('Gather', ins[:2], [out], axis=axis)
     elif t == 'Convert':
       node = H.make_node('Cast', ins, [out], to=self._tensor_proto(a['destination_type']))
     elif t == 'ShapeOf':
@@ -529,6 +561,101 @@ class Builder:
     self.tensor[ir.out_key(lid)] = out
 
 
+def validate(ir, onnx_path, fq, image_path=None):
+  """同一份 RGB/NCHW/0~1 输入，检查 IR、ORT 与 OpenCV CPU 输出。"""
+  import cv2
+  import onnxruntime as ort
+  import openvino as ov
+
+  cv2.setNumThreads(2)
+  options = ort.SessionOptions()
+  options.intra_op_num_threads = 2
+  session = ort.InferenceSession(
+    onnx_path, sess_options=options, providers=['CPUExecutionProvider'])
+  shape = session.get_inputs()[0].shape
+  if len(shape) != 4 or shape[:2] != [1, 3]:
+    raise ValueError('验证仅支持静态 NCHW、batch=1、RGB 三通道输入')
+  if image_path:
+    image = cv2.imread(image_path)
+    if image is None:
+      raise ValueError('无法读取验证图片: ' + image_path)
+    height, width = shape[2:]
+    scale = min(height / image.shape[0], width / image.shape[1])
+    h, w = int(image.shape[0] * scale), int(image.shape[1] * scale)
+    padded = np.zeros((height, width, 3), dtype=np.uint8)
+    padded[:h, :w] = cv2.resize(image, (w, h))
+    x = cv2.dnn.blobFromImage(padded, 1.0 / 255.0, swapRB=True)
+  else:
+    x = np.random.default_rng(0).random(shape, dtype=np.float32)
+
+  core = ov.Core()
+  model = core.read_model(ir.xml_path, ir.bin_path)
+  config = {'INFERENCE_PRECISION_HINT': 'f32', 'INFERENCE_NUM_THREADS': 2}
+
+  def infer(reference):
+    compiled = core.compile_model(reference, 'CPU', config)
+    result = compiled([x])
+    return [np.array(result[output], copy=True) for output in compiled.outputs]
+
+  def compare(reference, actual):
+    if len(reference) != len(actual):
+      raise RuntimeError('输出数量不一致')
+    stats = []
+    for expected, value in zip(reference, actual):
+      if expected.shape != value.shape or not (
+          np.isfinite(expected).all() and np.isfinite(value).all()):
+        raise RuntimeError('输出形状不一致或包含非有限数值')
+      delta = np.abs(expected.astype(np.float64) - value.astype(np.float64))
+      stats.append({'shape': list(value.shape), 'max_abs': float(delta.max()),
+                    'mean_abs': float(delta.mean())})
+    return stats
+
+  ir_outputs = infer(model)
+  ort_outputs = session.run(None, {'input': x})
+  net = cv2.dnn.readNetFromONNX(onnx_path)
+  net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+  net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+  net.setInput(x)
+  cv_outputs = net.forward(net.getUnconnectedOutLayersNames())
+  report = {
+    'xml': ir.xml_path, 'onnx': onnx_path, 'fq': fq,
+    'input': image_path or 'numpy default_rng(0), uniform [0, 1)',
+    'input_shape': shape,
+    'versions': {'numpy': np.__version__, 'openvino': ov.__version__,
+                 'onnxruntime': ort.__version__, 'opencv': cv2.__version__},
+    'ir_vs_ort': compare(ir_outputs, ort_outputs),
+    'ort_vs_opencv': compare(ort_outputs, cv_outputs),
+    'accuracy_validated': False,
+  }
+  def close(reference, actual):
+    return all(np.allclose(a, b, rtol=1e-3, atol=1e-2) for a, b in zip(reference, actual))
+
+  report['checks'] = {'shape_and_finite': True, 'opencv_forward': True,
+                      'ir_close_to_ort': close(ir_outputs, ort_outputs),
+                      'opencv_close_to_ort': close(ort_outputs, cv_outputs)}
+  # drop 的结构正确性要与同样移除 FQ 的 IR 比较；原始 IR 的差异另行保留。
+  if fq == 'drop':
+    reference = model.clone()
+    for op in reference.get_ordered_ops():
+      if op.get_type_name() == 'FakeQuantize':
+        op.output(0).replace(op.input_value(0))
+    reference.validate_nodes_and_infer_types()
+    # 与转换器一样先折叠权重反量化；否则 CPU 仍可能将 i8 权重链融合成低精度 FC。
+    from openvino.runtime.passes import ConstantFolding, Manager
+    passes = Manager()
+    passes.register_pass(ConstantFolding())
+    passes.run_passes(reference)
+    reference_outputs = infer(reference)
+    report['ir_without_fq_vs_ort'] = compare(reference_outputs, ort_outputs)
+    report['checks']['ir_without_fq_close_to_ort'] = close(reference_outputs, ort_outputs)
+  reference_check = 'ir_without_fq_close_to_ort' if fq == 'drop' else 'ir_close_to_ort'
+  report['validation_passed'] = (
+    report['checks'][reference_check] and report['checks']['opencv_close_to_ort'])
+  report['note'] = ('单输入的数值和加载检查不代表检测精度验证；'
+                    '原始 INT8 IR 的内核舍入及融合可能与展开的浮点 FQ 不同。')
+  return report
+
+
 def main():
   ap = argparse.ArgumentParser(description='OpenVINO IR -> ONNX（YOLO 检测模型）')
   ap.add_argument('xml', help='输入 .xml')
@@ -536,25 +663,43 @@ def main():
   ap.add_argument('--bin', default=None, help='.bin 路径（默认同名）')
   ap.add_argument('--fq', choices=['drop', 'exact'], default='drop',
                   help='FakeQuantize 处理方式：drop=恒等（推荐，利于 OpenCV DNN）')
-  ap.add_argument('--opset', type=int, default=13)
+  ap.add_argument('--opset', type=int, choices=range(13, 18), default=13)
   ap.add_argument('--inspect', action='store_true', help='只解析并打印统计，不写 ONNX')
+  ap.add_argument('--validate', action='store_true', help='转换后对比 IR/ORT/OpenCV CPU')
+  ap.add_argument('--image', help='验证图片（按项目方式填充、RGB、归一化；默认固定随机输入）')
+  ap.add_argument('--report', help='将验证结果写入 JSON 文件（需 --validate）')
   args = ap.parse_args()
+  if (args.image or args.report) and not args.validate:
+    ap.error('--image/--report 需要 --validate')
+  if args.validate and (args.inspect or not args.out):
+    ap.error('--validate 需要输出路径，且不能与 --inspect 同用')
 
   ir = IRModel(args.xml, args.bin)
   if args.inspect or not args.out:
-    inspect(ir)
-    return 0
+    return 0 if inspect(ir) else 1
 
   b = Builder(ir, fq=args.fq, opset=args.opset)
   model = b.build()
 
   import onnx
   from onnx import checker
-  checker.check_model(model)
+  checker.check_model(model, full_check=True)
+  os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
   onnx.save(model, args.out)
   print('已导出 %s（%d 个节点，%d 个 initializer，%.2f MB）' %
         (args.out, len(b.nodes), len(b.inits),
          os.path.getsize(args.out) / 1024 / 1024))
+  if args.validate:
+    report = validate(ir, args.out, args.fq, args.image)
+    result = json.dumps(report, ensure_ascii=False, indent=2)
+    print(result)
+    if args.report:
+      os.makedirs(os.path.dirname(os.path.abspath(args.report)), exist_ok=True)
+      with open(args.report, 'w', encoding='utf-8') as f:
+        f.write(result + '\n')
+    if not report['validation_passed']:
+      print('数值对齐未通过，详见报告；ONNX 文件已导出。', file=sys.stderr)
+      return 1
   return 0
 
 
