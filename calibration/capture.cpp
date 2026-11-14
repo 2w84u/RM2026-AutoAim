@@ -65,6 +65,7 @@ void capture_loop(const std::string & config_path, const fs::path & output_folde
   const auto yaml = YAML::LoadFile(config_path);
   const cv::Size pattern_size(yaml["pattern_cols"].as<int>(), yaml["pattern_rows"].as<int>());
   tools::logger()->info("棋盘格内角点：{} 列 × {} 行", pattern_size.width, pattern_size.height);
+  tools::logger()->info("实时预览；按 s 时检测棋盘格并保存原图，按 q 退出");
 
   tools::Exiter exiter;
   std::unique_ptr<io::Gimbal> gimbal;
@@ -84,33 +85,34 @@ void capture_loop(const std::string & config_path, const fs::path & output_folde
     // Associate pose with this image before detection/display adds any latency.
     // Missing/stale telemetry remains empty instead of becoming identity pose.
     const auto q = gimbal ? gimbal->try_q(timestamp) : std::nullopt;
-    auto drawing = image.clone();
+    cv::Mat drawing;
+    cv::resize(image, drawing, {}, 0.5, 0.5, cv::INTER_AREA);
     if (q) {
       const Eigen::Vector3d ypr = tools::eulers(*q, 2, 1, 0) * 180.0 / CV_PI;
-      tools::draw_text(drawing, fmt::format("yaw   {:.2f}", ypr[0]), {40, 40}, {0, 0, 255});
-      tools::draw_text(drawing, fmt::format("pitch {:.2f}", ypr[1]), {40, 80}, {0, 0, 255});
-      tools::draw_text(drawing, fmt::format("roll  {:.2f}", ypr[2]), {40, 120}, {0, 0, 255});
+      tools::draw_text(drawing, fmt::format("yaw   {:.2f}", ypr[0]), {20, 25}, {0, 0, 255}, 0.7, 1);
+      tools::draw_text(drawing, fmt::format("pitch {:.2f}", ypr[1]), {20, 50}, {0, 0, 255}, 0.7, 1);
+      tools::draw_text(drawing, fmt::format("roll  {:.2f}", ypr[2]), {20, 75}, {0, 0, 255}, 0.7, 1);
     } else {
       tools::draw_text(
         drawing, images_only ? "Images only" : "Waiting for matching gimbal pose",
-        {40, 40}, {0, 0, 255});
+        {20, 25}, {0, 0, 255}, 0.7, 1);
     }
 
-    std::vector<cv::Point2f> corners;
-    const auto detected = calibration::find_chessboard_corners(image, pattern_size, corners);
-    cv::drawChessboardCorners(drawing, pattern_size, corners, detected);
-    cv::resize(drawing, drawing, {}, 0.5, 0.5);
-    cv::imshow("Press s to save, q to quit", drawing);
+    cv::imshow("Press s to detect/save, q to quit", drawing);
     const auto key = cv::waitKey(1);
     if (key == 'q' || key == 'Q') break;
     if (key != 's' && key != 'S') continue;
 
-    if (!detected) {
-      tools::logger()->warn("未检测到完整棋盘格，本帧未保存");
-      continue;
-    }
     if (!images_only && !q) {
       tools::logger()->warn("没有与图像时刻匹配的有效姿态（允许偏差 50 ms），本帧未保存");
+      continue;
+    }
+
+    // Full-resolution detection runs only on the frame selected for saving.
+    // Keep its already matched pose while detection and disk writes take time.
+    std::vector<cv::Point2f> corners;
+    if (!calibration::find_chessboard_corners(image, pattern_size, corners)) {
+      tools::logger()->warn("未检测到完整棋盘格，本帧未保存");
       continue;
     }
 

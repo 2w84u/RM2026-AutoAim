@@ -91,11 +91,14 @@ struct Feedback
 void draw_orientation(cv::Mat & image, const Eigen::Quaterniond & orientation)
 {
   const cv::Point origin(835, 370);
+  // Right/down screen axes for an oblique view from the world's +Z side.
   const auto project = [&](const Eigen::Vector3d & point) {
     return origin + cv::Point(
-      cvRound(115.0 * (point.x() - point.y()) / std::sqrt(2.0)),
+      cvRound(115.0 * (point.y() - point.x()) / std::sqrt(2.0)),
       cvRound(115.0 * ((point.x() + point.y()) / std::sqrt(8.0) - 0.8660254 * point.z())));
   };
+  cv::putText(image, "View from +Z side", {720, 170}, cv::FONT_HERSHEY_SIMPLEX,
+    0.55, {180, 180, 180}, 1, cv::LINE_AA);
   const auto rotation = orientation.toRotationMatrix();
   std::array<cv::Point, 8> box;
   for (int i = 0; i < 8; ++i) {

@@ -51,6 +51,7 @@ cmake --build --preset default --target gimbal_feedback_test
 
 窗口显示原始 wxyz、归一化前模长、ZYX 欧拉角、板端 yaw/pitch 及二者环绕角差，
 右侧显示三维立方体和坐标轴。灰色为世界轴，红/绿/蓝分别是机体 X/Y/Z。
+三维视图固定从世界 Z 正侧斜俯视；沿 Z 负方向看时，正 yaw 为逆时针，顺时针转动时 yaw 减小。
 按 q 或 Esc 退出；无有效四元数或反馈已超时时不绘制姿态。
 
 同时向本机 UDP **9870** 发送 JSON，供 PlotJuggler 接收。

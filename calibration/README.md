@@ -9,7 +9,7 @@ pattern_rows: 10
 center_distance_mm: 15
 ```
 
-相机内参、两种手眼标定和采集预览共用棋盘格检测与亚像素角点优化。
+相机内参、两种手眼标定和采集时的照片检测共用棋盘格检测与亚像素角点优化。
 更换标定板时，修改上述内角点数量和间距。
 
 ## 同时采集图片和姿态
@@ -23,6 +23,8 @@ cmake --build --preset default --target capture
 
 按 **s** 保存当前图像及其对应姿态，按 **q** 退出。每组数据保存为同编号的
 `1.jpg` / `1.txt`、`2.jpg` / `2.txt`……；TXT 内容是 `w x y z`，重复采集会跳过已有编号。
+实时预览显示缩小画面和姿态；按 s 时才对选中的原始图像进行完整棋盘格检测。
+保存保持原始分辨率，四元数也使用该帧对应的姿态；按 s 后检测和写盘期间可能短暂停顿。
 只保存识别到完整 7×10 内角点、且有有效姿态的帧；写入失败时会清理本次不完整样本。
 采集程序只读取云台反馈，不发送云台控制指令。
 
@@ -48,14 +50,22 @@ cmake --build --preset default --target calibrate_camera
 ./build/calibrate_camera assets/calibration_images --config-path=configs/calibration.yaml
 ```
 
-图片连续命名为 `1.jpg`、`2.jpg`……，缺号即停止读取。
-程序逐张显示角点检测结果，按键进入下一张。
-终端输出的 `camera_matrix`、`distort_coeffs` 需要手动填入机器人配置，例如 `configs/sentry.yaml`。
+程序遍历目录内实际存在的 JPG/JPEG/PNG/BMP 图片，编号缺失不会中断。
+默认批量处理，不弹窗或逐张等待按键；使用 `--display` 时才逐张显示角点并等待按键。
+读图和角点检测结束后会明确提示进入求解阶段，多图求解使用 QR 分解并固定 k3。
+结果打印到终端，也可使用 `--output=out/calibration/camera_intrinsics.yaml` 保存为 YAML。
+其中的 `camera_matrix`、`distort_coeffs` 可填入机器人配置，例如 `configs/sentry.yaml`。
 
 ## 手眼标定
 
 `calibrate_handeye` / `calibrate_robotworld_handeye` 还需要每张图片对应的同名 `.txt`，
 内容为拍摄时的四元数，顺序是 `w x y z`；配置中需先填写相机内参、畸变参数和 `R_gimbal2imubody`。
+两者默认逐张显示并等待按键，追加 `--no-display` 可批量处理实拍数据：
+
+```bash
+./build/calibrate_handeye assets/img_with_q2 --config-path=configs/calibration.yaml --no-display
+./build/calibrate_robotworld_handeye assets/img_with_q2 --config-path=configs/calibration.yaml --no-display
+```
 
 `capture` 已改用当前 Gimbal AB 接口，不再需要开启 `ENABLE_LEGACY_CBOARD`。
 它与其它标定工具一样，按目标手动编译。
