@@ -4,6 +4,7 @@
 
 #include "yolos/yolo11.hpp"
 #include "yolos/yolov5.hpp"
+#include "yolos/yolov5_trt.hpp"
 #include "yolos/yolov8.hpp"
 
 namespace auto_aim
@@ -20,6 +21,15 @@ std::unique_ptr<YOLOBase> create_season_detector(const std::string & config_path
   if (name == "yolov8") return std::make_unique<YOLOV8>(config_path, debug);
   if (name == "yolo11") return std::make_unique<YOLO11>(config_path, debug);
   if (name == "yolov5") return std::make_unique<YOLOV5>(config_path, debug);
+  if (name == "yolov5_trt") {
+#ifdef SPVISION_WITH_TENSORRT
+    return std::make_unique<YOLOV5TRT>(config_path, debug);
+#else
+    throw std::runtime_error(
+      "yolo_name: yolov5_trt needs a TensorRT build; configure with -DENABLE_TENSORRT=ON on the "
+      "Jetson (see docs/jetson_tensorrt.md)");
+#endif
+  }
   throw std::runtime_error("Unknown YOLO adapter: " + name);
 }
 }  // namespace

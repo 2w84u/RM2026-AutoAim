@@ -21,3 +21,8 @@ out/ir2onnx/*.onnx
 /out/detector_verify/
 /out/camera_samples/
 /out/gimbal_mpc_response/
+
+# TensorRT：Engine 与构建日志只在本机构建，不随仓库分发
+assets/*.engine
+assets/*.engine.build.log
+assets/*.onnx.download.txt

@@ -11,6 +11,9 @@ classify_model: assets/tiny_resnet.onnx
 yolo11_model_path: assets/yolo11_dnn.onnx
 yolov8_model_path: assets/yolov8.onnx
 yolov5_model_path: assets/yolov5.onnx
+# TensorRT 后端：需 -DENABLE_TENSORRT=ON 编译，并在 NX 上先执行 scripts/trt/build_engine.sh
+# 切换总后端只需把上面的 yolo_name 改成 yolov5_trt
+yolov5_trt_model_path: assets/0708_fp16.engine
 # GPU -> OpenCV DNN CUDA FP16；CPU -> OpenCV DNN CPU
 device: GPU
 # yolo11_dnn.onnx 输出 (1, 50, 8400) = 4 + 38 类 + 8 关键点

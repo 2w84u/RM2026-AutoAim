@@ -8,6 +8,7 @@ option(ENABLE_LEGACY_CBOARD "Build deprecated C-board CAN/UART transport" OFF)
 option(BUILD_TESTING "Build hardware-free contract tests with the default targets" OFF)
 option(ENABLE_OPENVINO "Enable OpenVINO IR (.xml) inference backend" ON)
 option(ENABLE_CUDA_DNN "Enable OpenCV DNN CUDA backend for ONNX models" ON)
+option(ENABLE_TENSORRT "Enable TensorRT (.engine) inference backend (Jetson only)" OFF)
 include(CTest)
 # Refresh CTest discovery even when BUILD_TESTING is switched off in an
 # existing build directory, so old test registrations cannot linger.
@@ -37,6 +38,31 @@ endif()
 if(ENABLE_CUDA_DNN)
   add_compile_definitions(SPVISION_WITH_CUDA_DNN)
   message(STATUS "OpenCV DNN CUDA enabled for device: GPU")
+endif()
+
+# TensorRT engines are built on the target Jetson and loaded from .engine files.
+# Only enabled explicitly: x86 hosts normally have neither NvInfer.h nor CUDA.
+set(TENSORRT_FOUND OFF)
+if(ENABLE_TENSORRT)
+  set(TENSORRT_ROOT "" CACHE PATH "TensorRT install prefix (JetPack: /usr)")
+  find_package(CUDAToolkit QUIET)
+  find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+    HINTS "${TENSORRT_ROOT}/include" /usr/include /usr/include/aarch64-linux-gnu)
+  find_library(TENSORRT_LIBRARY nvinfer
+    HINTS "${TENSORRT_ROOT}/lib" /usr/lib /usr/lib/aarch64-linux-gnu)
+  if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND CUDAToolkit_FOUND)
+    set(TENSORRT_FOUND ON)
+    add_compile_definitions(SPVISION_WITH_TENSORRT)
+    message(STATUS "Inference backend: TensorRT (${TENSORRT_LIBRARY}) + CUDA ${CUDAToolkit_VERSION}")
+  else()
+    message(FATAL_ERROR
+      "ENABLE_TENSORRT=ON but TensorRT/CUDA was not found "
+      "(NvInfer.h: '${TENSORRT_INCLUDE_DIR}', libnvinfer: '${TENSORRT_LIBRARY}', "
+      "CUDAToolkit_FOUND: '${CUDAToolkit_FOUND}').\n"
+      "On a Jetson check that JetPack ships TensorRT and that /usr/include/aarch64-linux-gnu/NvInfer.h "
+      "and /usr/lib/aarch64-linux-gnu/libnvinfer.so exist; set -DTENSORRT_ROOT=<prefix> if they live "
+      "elsewhere. On an x86 host omit -DENABLE_TENSORRT (engines built here are not portable to Jetson).")
+  endif()
 endif()
 
 # All ROS consumers use the same dependency check, including geometry_msgs.
