@@ -10,6 +10,7 @@
 
 #include "armor.hpp"
 #include "detection_timing.hpp"
+#include "inference_diagnostics.hpp"
 
 namespace auto_aim
 {
@@ -21,6 +22,8 @@ public:
   friend class YOLO;
   virtual ~YOLOBase() = default;
   virtual std::list<Armor> detect(const cv::Mat & img, int frame_count) = 0;
+  // Inspect only networks that have already processed real input; never run inference here.
+  virtual std::vector<InferenceGraph> inference_graphs() { return {}; }
   virtual std::list<Armor> postprocess(double, cv::Mat &, const cv::Mat &, int)
   {
     throw std::logic_error("This model adapter does not expose raw postprocess()");
@@ -50,6 +53,7 @@ public:
   void set_text_prompts(const std::vector<std::string> & prompts);
   void set_timing_enabled(bool enabled);
   const DetectionTiming & timing() const;
+  std::vector<InferenceGraph> inference_graphs();
 
 private:
   std::unique_ptr<YOLOBase> yolo_;

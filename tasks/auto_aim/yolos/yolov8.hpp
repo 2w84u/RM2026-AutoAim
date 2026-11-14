@@ -24,6 +24,7 @@ public:
   YOLOV8(const std::string & config_path, bool debug);
 
   std::list<Armor> detect(const cv::Mat & bgr_img, int frame_count) override;
+  std::vector<InferenceGraph> inference_graphs() override;
 
   std::list<Armor> postprocess(
     double scale, cv::Mat & output, const cv::Mat & bgr_img, int frame_count) override;

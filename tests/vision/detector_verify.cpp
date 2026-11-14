@@ -24,15 +24,18 @@
 #include "tasks/auto_aim/armor.hpp"
 #include "tasks/auto_aim/yolo.hpp"
 #include "tools/exiter.hpp"
+#include "detector_diagnostics.hpp"
 
 namespace fs = std::filesystem;
 
 struct Options
 {
   std::string input;
-  std::string config_path = "configs/jetson.yaml";
+  std::string config_path = "configs/sentry.yaml";
   std::string output_dir = "out/detector_verify";
   std::string json_path;
+  std::string diagnostics_dir;
+  int warmup = 10;
   int max_frames = 0;
   int print_every = 0;
   bool save = true;
@@ -40,6 +43,7 @@ struct Options
   bool quiet = false;
   bool camera = false;
   bool save_raw = false;
+  bool diagnose = false;
 };
 
 void print_usage()
@@ -48,7 +52,7 @@ void print_usage()
     "用法: detector_verify [选项] <图片|图片目录|视频>\n"
     "\n"
     "  -h, --help                 显示本帮助\n"
-    "  -c, --config-path PATH     yaml 配置（默认 configs/jetson.yaml）\n"
+    "  -c, --config-path PATH     yaml 配置（默认 configs/sentry.yaml）\n"
     "  -o, --output DIR           标注结果输出目录（默认 out/detector_verify）\n"
     "  -m, --max-frames N         最多处理帧数，0=全部（默认 0）\n"
     "  -p, --print-every N        每 N 帧打印一次，0=自动（相机 30，文件 1）\n"
@@ -58,9 +62,12 @@ void print_usage()
     "  -q, --quiet                只打印汇总\n"
     "      --camera               直接读取相机（相机参数取自 config）\n"
     "      --save-raw             保存前 5 帧原始图像（诊断预处理）\n"
+    "      --diagnose[=BOOL]      启用模型链路诊断、OpenCV INFO 回退日志和阶段统计\n"
+    "      --warmup N            诊断统计排除前 N 帧，计入 max-frames（默认 10）\n"
+    "      --diagnostics-dir DIR  诊断输出目录（默认 OUTPUT/diagnostics）\n"
     "\n"
     "示例:\n"
-    "  detector_verify --camera -c configs/jetson-ir.yaml -m 300 -p 30 --show\n"
+    "  detector_verify --camera -c configs/sentry.yaml -m 120 --save=false --diagnose\n"
     "  detector_verify match.avi -c configs/jetson-ir.yaml --json cand.json\n");
 }
 
@@ -106,6 +113,12 @@ Options parse_args(int argc, char ** argv, bool & help)
       o.camera = true;
     } else if (key == "--save-raw") {
       o.save_raw = true;
+    } else if (key == "--diagnose") {
+      o.diagnose = arg.find('=') == std::string::npos ? true : parse_bool(value(i, arg));
+    } else if (key == "--warmup") {
+      o.warmup = std::stoi(value(i, arg));
+    } else if (key == "--diagnostics-dir") {
+      o.diagnostics_dir = value(i, arg);
     } else if (!arg.empty() && arg[0] == '-') {
       throw std::runtime_error("未知参数: " + arg);
     } else if (o.input.empty()) {
@@ -114,6 +127,7 @@ Options parse_args(int argc, char ** argv, bool & help)
       throw std::runtime_error("多余的位置参数: " + arg);
     }
   }
+  if (o.warmup < 0) throw std::runtime_error("warmup 不能为负数");
   return o;
 }
 
@@ -197,6 +211,10 @@ int main(int argc, char * argv[])
     return 1;
   }
 
+  detector_verify::Diagnostics diagnostics(
+    opt.diagnose, opt.warmup, opt.diagnostics_dir.empty()
+      ? fs::path(output_dir) / "diagnostics" : fs::path(opt.diagnostics_dir));
+
   // 打印实际使用的模型，方便确认测的是哪一份
   {
     auto yaml = YAML::LoadFile(config_path);
@@ -205,9 +223,11 @@ int main(int argc, char * argv[])
     fmt::print("config : {}\n", config_path);
     fmt::print("model  : {} ({})\n", model, yaml["device"] ? yaml["device"].as<std::string>() : "CPU");
     fmt::print("class  : {}\n", yaml["class_num"] ? yaml["class_num"].as<int>() : -1);
+    diagnostics.start(yaml, config_path);
   }
 
   auto_aim::YOLO yolo(config_path, false);  // debug=false：不弹窗、不保存中间图
+  yolo.set_timing_enabled(opt.diagnose);
 
   std::unique_ptr<io::Camera> camera;
   if (use_camera) {
@@ -290,6 +310,12 @@ int main(int argc, char * argv[])
 
     if (!quiet && index % print_every == 0) {
       fmt::print("[{:04d}] {:6.2f} ms  {} 个", index, ms, armors.size());
+      if (opt.diagnose && yolo.timing().valid) {
+        const auto & timing = yolo.timing();
+        fmt::print(" pre={:.2f} forward={:.2f} post={:.2f} ms nms={}",
+          timing.preprocessing_ms(), timing.ms(auto_aim::DetectStage::forward),
+          timing.postprocessing_ms(), timing.nms_candidates);
+      }
       for (const auto & a : armors) {
         fmt::print(" | {}", armor_name(a));
         fmt::print(" c={:.2f} box=({},{},{},{})", a.confidence, a.box.x, a.box.y, a.box.width,
@@ -305,6 +331,7 @@ int main(int argc, char * argv[])
     frame["index"] = index;
     frame["ms"] = ms;
     frame["detections"] = to_json(armors);
+    if (opt.diagnose) frame["timing"] = diagnostics.sample(frames, img, ms, yolo.timing());
     report["frames"].push_back(std::move(frame));
 
     if (save_raw && index < 5) {
@@ -314,8 +341,11 @@ int main(int argc, char * argv[])
       if (!quiet) fmt::print("  raw -> {}\n", raw_path.string());
     }
 
-    cv::Mat annotated = img.clone();
-    draw(annotated, armors);
+    cv::Mat annotated;
+    if (save || show) {
+      annotated = img.clone();
+      draw(annotated, armors);
+    }
 
     if (save) {
       if (stream_mode) {
@@ -430,9 +460,10 @@ int main(int argc, char * argv[])
       bogus_conf);
   }
 
+  if (opt.diagnose) report["diagnostics"] = diagnostics.finish(yolo, frames);
+  diagnostics.save(report);
   if (!json_path.empty()) {
-    std::ofstream ofs(json_path);
-    ofs << report.dump(1);
+    detector_verify::write_file(json_path, report.dump(1));
     fmt::print("JSON        : {}\n", json_path);
   }
 

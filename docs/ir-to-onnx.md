@@ -177,8 +177,7 @@ cmake --build --preset default --target detector_verify
 ./build/detector_verify match.avi --config-path=configs/jetson-ir.yaml --json cand.json
 ```
 
-注意：OpenCV 的 `CommandLineParser` 对 `-c 路径` 这种“空格分隔”的短参数解析不可靠，
-请统一写成 `--config-path=路径`。
+当前工具使用自己的参数解析，`-c 路径` 和 `--config-path=路径` 均可。
 
 每帧输出耗时、检出数、类别、置信度、框与第一个关键点；结束时输出帧数、
 有检出帧比例、类别直方图和平均耗时/FPS。若整段没有任何检出，会打印排查提示。
@@ -218,3 +217,32 @@ python3 tools/compare_detections.py ref.json cand.json --iou 0.5
 关键点平均偏移；匹配率低于 `--min-match`（默认 95%）时返回非 0，可用于回归验收。
 这是目前唯一能覆盖“NMS 后框/类别/关键点”的验证方式，建议录制一段有目标的
 比赛视频作为固定基准。
+
+### 6.4 无头模型链路诊断
+
+```bash
+./build/detector_verify --camera -c configs/sentry.yaml \
+  --diagnose --warmup 10 -m 120 -p 30 --save=false \
+  -o out/detector_verify/yolo11 2>&1 | tee out/detector-yolo11.log
+```
+
+默认无窗口；该工具不构造云台通讯对象，不发送控制。相机、真实图片、目录和视频均可
+使用 `--diagnose`。切换模型后重启工具，并为每个模型指定不同的 `-o` 目录。
+
+诊断启用 OpenCV INFO 日志，保留首帧 CUDA 初始化和 CPU 回退信息；记录 OpenCV
+版本/构建信息、CUDA 编译开关、可用设备和 DNN target、模型绝对路径、原始图像尺寸，
+并在实际推理完成后导出执行图。`OUTPUT/diagnostics/` 内包含：
+
+- `report.json`：逐帧检测和阶段耗时、候选数，排除预热帧后的均值/P50/P95/最大值。
+- `detector.dot`：实际检测网络的后端、target、输出尺寸和融合组。
+- `number_classifier.dot`：YOLOv8 的数字分类器；只有真实候选触发过分类才会导出。
+- `opencv-build.txt`：当前链接的 OpenCV 构建详情。
+
+可用 `--diagnostics-dir` 改变诊断目录。`--save=false` 关闭标注图/视频保存，诊断文件
+仍会写入。`--warmup` 默认排除前 10 帧，这些帧仍计入 `-m`，也保留在逐帧记录中。
+总帧数不足时显示稳态样本为 0，不用首帧加载耗时冒充稳态性能。
+
+`forward` 是主机墙钟耗时，包含传输、同步、转换及可能的 CPU 回退，不能当成纯 GPU
+核函数耗时。DOT 中 CUDA/OCV 数量统计的是图节点或融合组，不是耗时占比；输入占位层
+和形状操作需要与卷积等计算层分开判断。YOLOv8 的 32×32 数字分类器使用现有的
+OpenCV CPU 路径，单独列为分类阶段；没有真实有效候选时不会额外构造输入运行它。

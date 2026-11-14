@@ -2,16 +2,34 @@ enemy_color: "red"
 # enemy_color: "blue"
 
 #####-----神经网络参数-----#####
-yolo_name: yolo11
+# 公共参数：三个方案均使用 ONNX + OpenCV DNN，device: GPU 请求 CUDA FP16。
 classify_model: assets/tiny_resnet.onnx
-# 当前 YOLO11 适配器使用 38 类、4 个物理关键点。
-yolo11_model_path: assets/yolo11_dnn.onnx
-yolov8_model_path: assets/yolov8.onnx
-yolov5_model_path: assets/yolov5.onnx
 device: GPU
-class_num: 38
 min_confidence: 0.8
+
+# 切换时先注释当前方案的整块配置，再取消另一个方案的整块注释，然后重启程序。
+# 只启用一个方案，避免重复的 yolo_name / class_num；输入尺寸由对应适配器固定。
+# 性能比较分别观察 forward 和 detect 总耗时；YOLOv8 输入较小且另有数字分类阶段。
+
+# 方案 1：YOLO11（当前默认），640×640，输出 1×50×8400，38 类 + 4 关键点。
+yolo_name: yolo11
+yolo11_model_path: assets/yolo11_dnn.onnx
+class_num: 38
+# 保留当前配置；YOLO11 适配器不执行传统角点二次修正。
 use_traditional: true
+
+# 方案 2：YOLOv8，416×416，输出 1×14×3549，2 类 + 4 关键点。
+# 必须同时把 class_num 切为 2；此方案还会调用上面的 tiny_resnet 数字分类器。
+# yolo_name: yolov8
+# yolov8_model_path: assets/yolov8.onnx
+# class_num: 2
+
+# 方案 3：YOLOv5，640×640，输出 1×25200×22，旧版固定列布局。
+# 该适配器不读取 class_num；先关闭传统角点二次修正，便于对比模型与解码耗时。
+# 需要比较传统修正开销时，可将本方案的 use_traditional 改为 true。
+# yolo_name: yolov5
+# yolov5_model_path: assets/yolov5.onnx
+# use_traditional: false
 
 #####-----ROI-----#####
 roi:

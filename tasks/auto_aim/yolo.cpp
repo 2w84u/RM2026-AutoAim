@@ -50,6 +50,8 @@ void YOLO::set_timing_enabled(bool enabled) { yolo_->profiler_.enable(enabled); 
 
 const DetectionTiming & YOLO::timing() const { return yolo_->profiler_.timing(); }
 
+std::vector<InferenceGraph> YOLO::inference_graphs() { return yolo_->inference_graphs(); }
+
 bool YOLO::supports_text_prompts() const { return yolo_->supports_text_prompts(); }
 
 void YOLO::set_text_prompts(const std::vector<std::string> & prompts)

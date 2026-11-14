@@ -72,6 +72,14 @@ YOLO11::YOLO11(const std::string & config_path, bool debug)
     : "OpenCV DNN / requested " + device_);
 }
 
+std::vector<InferenceGraph> YOLO11::inference_graphs()
+{
+  return {{"detector", use_openvino_ ? "" : net_.dump(),
+    use_openvino_ ? "OpenVINO; OpenCV execution graph is unavailable."
+      : "OpenCV graph after real inference. Number classes come from the detection head; "
+        "the traditional detector's loaded classifier is not called by this adapter."}};
+}
+
 std::list<Armor> YOLO11::detect(const cv::Mat & raw_img, int frame_count)
 {
   if (raw_img.empty()) {

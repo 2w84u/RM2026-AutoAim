@@ -1,5 +1,7 @@
 # Jetson / CUDA DNN 构建说明
 
+当前三模型的性能优化、TensorRT FP16 接入、INT8 校准与重训决策，见 [Orin NX YOLO 优化实施路线](jetson-yolo-optimization-roadmap.md)。
+
 ## 后端选择规则
 
 推理后端由**模型文件后缀**决定，编译期开关只控制哪些后端被编进二进制：

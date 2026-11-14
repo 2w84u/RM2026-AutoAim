@@ -20,9 +20,11 @@ public:
   void classify(Armor & armor);
 
   void ovclassify(Armor & armor);
+  std::string inference_graph();
 
 private:
   cv::dnn::Net net_;
+  bool opencv_forwarded_ = false;
 #ifdef SPVISION_WITH_OPENVINO
   ov::Core core_;
   ov::CompiledModel compiled_model_;

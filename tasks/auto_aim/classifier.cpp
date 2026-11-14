@@ -16,6 +16,11 @@ Classifier::Classifier(const std::string & config_path)
 #endif
 }
 
+std::string Classifier::inference_graph()
+{
+  return opencv_forwarded_ ? net_.dump() : std::string{};
+}
+
 void Classifier::classify(Armor & armor)
 {
   if (armor.pattern.empty()) {
@@ -44,6 +49,7 @@ void Classifier::classify(Armor & armor)
 
   net_.setInput(blob);
   cv::Mat outputs = net_.forward();
+  opencv_forwarded_ = true;
 
   // softmax
   float max = *std::max_element(outputs.begin<float>(), outputs.end<float>());
