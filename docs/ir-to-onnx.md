@@ -20,7 +20,12 @@ OpenCV DNN 4.10 的加载及前向检查。转换器为 `tools/ir2onnx.py`。
 1 类和 6 个关键点。`yolov5` 保留旧版 22 列布局，不按上述公式解码。
 
 新增 [configs/jetson-ir.yaml](../configs/jetson-ir.yaml)，使用 `yolo11_dnn.onnx` 和
-`class_num: 38`。原 `configs/jetson.yaml` 继续使用已有的 3 类 `best2-sim.onnx`。
+`class_num: 38`。`configs/jetson.yaml` 也已改用 `yolo11_dnn.onnx`。
+
+> **注意：`assets/best2-sim.onnx` 不能直接用当前适配器解析。** 实测其输出为
+> `4 框 + 1 类 + 5 关键点（10 通道）= 15`，而 `yolo11` 适配器假设
+> `4 框 + nc 类 + 4 关键点`。若误把 `class_num` 设为 3，关键点坐标会被当成
+> 类别分数，表现为置信度出现数百、满屏误检。使用 5 关键点模型需要新写适配器。
 切换到 `yolov8` 时要同时设置 `yolo_name: yolov8` 和 `class_num: 2`。
 能量机关配置中的 `model` 可改为 `assets/yolo11_buff_int8.onnx`。
 
@@ -146,3 +151,67 @@ python tools/ir2onnx.py assets/yolo11.xml out/ir2onnx/yolo11_exact.onnx \
 不能把输入尺寸改为动态，也不会补回训练图、原始高精度权重或额外 NMS。
 新增模型出现未知算子、复杂切片掩码或 Gather 的非零 batch_dims 时需要另外适配。
 本次四个产物已能直接由 OpenCV 加载，没有引入 onnxsim 作为必要步骤。
+
+## 6 C++ 端识别验证（detector_verify）
+
+`tests/detector_verify.cpp` 是专门用于验证转换后模型的**无界面**工具，支持图片、
+图片目录、视频和相机实时输入，并可导出 JSON 做 A/B 对比。它绕过 `Debug` 适配器
+自带的弹窗，只走 `YOLO::detect()` 这条实际推理路径。
+
+> 测试目标只存在于 `CMAKE_BUILD_TYPE=Debug` 分支（与其它 `tests/` 一致），
+> 用 Release 构建时不会生成。验证阶段请用 Debug 构建；测速另用 Release。
+
+### 6.1 图片 / 视频 / 目录
+
+```bash
+# 单张图片
+./build/detector_verify assets/xxx.jpg --config-path=configs/jetson-ir.yaml
+
+# 图片目录（标注结果写入 verify_out/）
+./build/detector_verify /data/armor_imgs --config-path=configs/jetson-ir.yaml -o verify_out
+
+# 视频（同时写出 verify_out/annotated.avi 和 JSON）
+./build/detector_verify match.avi --config-path=configs/jetson-ir.yaml --json cand.json
+```
+
+注意：OpenCV 的 `CommandLineParser` 对 `-c 路径` 这种“空格分隔”的短参数解析不可靠，
+请统一写成 `--config-path=路径`。
+
+每帧输出耗时、检出数、类别、置信度、框与第一个关键点；结束时输出帧数、
+有检出帧比例、类别直方图和平均耗时/FPS。若整段没有任何检出，会打印排查提示。
+
+### 6.2 相机实时
+
+```bash
+# camera_name / exposure_ms / gain 全部取自 config
+./build/detector_verify --camera --config-path=configs/jetson-ir.yaml -m 300 -p 30
+```
+
+- `-m` 为最多处理帧数（0=不限，Ctrl+C 结束），`-p` 为每 N 帧打印一次
+- 相机采集是阻塞读取；若 5 秒没有任何帧，工具会直接退出并打印排查提示
+
+海康相机报 `MV_CC_EnumDevices failed: 0x80000006` 或 `Unable to open usb!` 时，
+先确认设备节点权限（本机实测原因为 `crw-rw-r-- root root`，普通用户无写权限）：
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2bdf", MODE="0666", GROUP="plugdev"' \
+  | sudo tee /etc/udev/rules.d/99-hikrobot.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+# 之后重新插拔相机
+```
+
+### 6.3 IR / ONNX A/B 对比
+
+```bash
+# 参考：x86 上用 OpenVINO 构建的同一工具 + .xml 配置
+./build/detector_verify match.avi -c configs/ref_ir.yaml --json ref.json
+# 候选：Jetson 上用转换后的 ONNX
+./build/detector_verify match.avi --config-path=configs/jetson-ir.yaml --json cand.json
+
+python3 tools/compare_detections.py ref.json cand.json --iou 0.5
+```
+
+比较脚本按类别 + IoU 贪心匹配，输出漏检、多余、类别不一致、平均 IoU、
+关键点平均偏移；匹配率低于 `--min-match`（默认 95%）时返回非 0，可用于回归验收。
+这是目前唯一能覆盖“NMS 后框/类别/关键点”的验证方式，建议录制一段有目标的
+比赛视频作为固定基准。

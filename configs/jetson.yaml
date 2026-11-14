@@ -5,13 +5,16 @@ enemy_color: "red"
 # Jetson / CUDA DNN 示例配置：所有模型必须是 .onnx（OpenVINO IR .xml 需要 ENABLE_OPENVINO）
 yolo_name: yolo11
 classify_model: assets/tiny_resnet.onnx
-yolo11_model_path: assets/best2-sim.onnx
+# 注意：best2-sim.onnx 的实际输出是 4 框 + 1 类 + 5 关键点（5x2=10 通道），
+# 与当前 yolo11 适配器（4 框 + nc 类 + 4 关键点）不兼容，不能直接用于识别。
+# 需要新赛季 5 关键点目标时请新增适配器，不要只改 class_num。
+yolo11_model_path: assets/yolo11_dnn.onnx
 yolov8_model_path: assets/yolov8.onnx
 yolov5_model_path: assets/yolov5.onnx
 # GPU -> OpenCV DNN CUDA FP16；CPU -> OpenCV DNN CPU
 device: GPU
-# 2027 迁移模型（best2-sim.onnx）输出为 (1, 15, 8400) = 4 + 3 类 + 8 关键点
-class_num: 3
+# yolo11_dnn.onnx 输出 (1, 50, 8400) = 4 + 38 类 + 8 关键点
+class_num: 38
 min_confidence: 0.8
 use_traditional: true
 
@@ -57,6 +60,6 @@ judge_distance: 2 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
 
 camera_name: "hikrobot"
-exposure_ms: 2
+exposure_ms: 12
 gain: 16
 vid_pid: "2bdf:0001"
