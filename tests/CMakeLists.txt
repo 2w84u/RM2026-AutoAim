@@ -17,6 +17,7 @@ add_manual_test(dm_test hardware/dm_test.cpp)
 
 add_manual_test(planner_test planning/planner_test.cpp auto_aim)
 add_manual_test(planner_test_offline planning/planner_test_offline.cpp auto_aim)
+add_manual_test(gimbal_mpc_response_test planning/gimbal_mpc_response_test.cpp tinympcstatic)
 
 if(SPVISION_WITH_ROS2)
   add_manual_test(topic_loop_test ros2/topic_loop_test.cpp)

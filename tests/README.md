@@ -21,6 +21,7 @@ cmake --build --preset default --target gimbal_test
 | `hardware/` | `dm_test` | 达妙 IMU 姿态观测 |
 | `planning/` | `planner_test_offline` | 合成目标的 MPC 规划，不连接云台 |
 | `planning/` | `planner_test` | 合成目标的实车 MPC 跟随 |
+| `planning/` | `gimbal_mpc_response_test` | 可调圆角矩形/单轴参考、TinyMPC 跟随、实机响应波形与 CSV，不依赖 PlotJuggler |
 | `ros2/` | `topic_loop_test` | 自定义消息发布/订阅链路 |
 | `ros2/` | `cmd_vel_publisher_test` | 导航速度话题发布 |
 | `ros2/` | `cmd_vel_subscriber_test` | 导航速度话题接收 |
@@ -32,6 +33,10 @@ cmake --build --preset default --target gimbal_test
 相机到 MPC 的实时链路使用现有 `auto_aim_debug_mpc` 应用，显示识别、跟踪、规划轨迹、
 原始反馈与期望姿态；默认仅接收反馈，`--enable-control` 开启跟随并固定不开火，见
 [自瞄 MPC 实机可视化](../docs/debugging/auto-aim-mpc-gui.md)。
+
+调云台动态响应可用 `gimbal_mpc_response_test`，绕过相机，构造用户指定的角度参考，
+直接显示两轴角度、速度、加速度、误差、XY 轨迹和统计，见
+[云台 MPC 响应测试](../docs/debugging/gimbal-mpc-response.md)。
 
 ## 原始四元数实机诊断
 
