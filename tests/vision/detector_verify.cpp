@@ -31,7 +31,7 @@ struct Options
 {
   std::string input;
   std::string config_path = "configs/jetson.yaml";
-  std::string output_dir = "verify_out";
+  std::string output_dir = "out/detector_verify";
   std::string json_path;
   int max_frames = 0;
   int print_every = 0;
@@ -49,7 +49,7 @@ void print_usage()
     "\n"
     "  -h, --help                 显示本帮助\n"
     "  -c, --config-path PATH     yaml 配置（默认 configs/jetson.yaml）\n"
-    "  -o, --output DIR           标注结果输出目录（默认 verify_out）\n"
+    "  -o, --output DIR           标注结果输出目录（默认 out/detector_verify）\n"
     "  -m, --max-frames N         最多处理帧数，0=全部（默认 0）\n"
     "  -p, --print-every N        每 N 帧打印一次，0=自动（相机 30，文件 1）\n"
     "  -j, --json FILE            检测结果写入 JSON（用于 A/B 对比）\n"

@@ -22,7 +22,9 @@
 ## 清理策略
 
 - CBoard/CBoardUART/SocketCAN 和相关实验入口不在默认构建中。
-- 只在显式开启 `-DENABLE_LEGACY_CBOARD=ON` 时尝试构建旧版 CAN 实验目标。它们暂时保留源码供迁移核对，并非新赛季运行依赖。
+- `-DENABLE_LEGACY_CBOARD=ON` 仅恢复旧传输实现及旧标定采集目标 `capture`；归档入口不自动恢复构建。
+- 历史应用和重复测试分别保存在 `src/archive/` 和 `tests/archive/`，供迁移核对，不再注册编译目标。
+- 当前默认应用只有 `sentry`（需要 ROS2/sp_msgs）和三个 MPC 入口。测试和标定按目标显式构建，详见 [当前构建说明](../readme.md) 和 [测试索引](../tests/README.md)。
 
 ## 验证清单
 

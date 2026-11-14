@@ -1,7 +1,7 @@
 .vscode/
 .github/
 .idea/
-build/
+/build*/
 Camera/
 logs/
 assets/img_with_q/
@@ -11,9 +11,11 @@ records_new/
 imgs/
 MvSdkLog/
 testvideos/
-watchdog.sh
+/watchdog.sh
 records_24/
 records_25/
 .venv-ir2onnx/
 __pycache__/
 out/ir2onnx/*.onnx
+/out/detector_verify/
+/out/camera_samples/

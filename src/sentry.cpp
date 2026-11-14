@@ -6,6 +6,8 @@
 #include <thread>
 
 #include "io/camera.hpp"
+#include "io/dm_imu/dm_imu.hpp"
+#include "io/gimbal/gimbal.hpp"
 #include "io/nav_serial.hpp"
 #include "io/ros2/publish2nav.hpp"
 #include "io/ros2/ros2.hpp"

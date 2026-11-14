@@ -20,7 +20,7 @@ Jetson（ARM64）没有官方 OpenVINO GPU 插件，所以想用 Orin 的 GPU �
 
 ```bash
 cmake -B build-jetson -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENVINO=OFF
-cmake --build build-jetson -j$(nproc)
+cmake --build build-jetson --parallel 8
 ```
 
 - `find_package(OpenVINO QUIET)`：找不到时自动关闭 OpenVINO 路径，不会配置失败。

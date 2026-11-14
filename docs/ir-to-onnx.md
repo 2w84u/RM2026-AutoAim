@@ -154,12 +154,15 @@ python tools/ir2onnx.py assets/yolo11.xml out/ir2onnx/yolo11_exact.onnx \
 
 ## 6 C++ 端识别验证（detector_verify）
 
-`tests/detector_verify.cpp` 是专门用于验证转换后模型的**无界面**工具，支持图片、
+`tests/vision/detector_verify.cpp` 是专门用于验证转换后模型的**无界面**工具，支持图片、
 图片目录、视频和相机实时输入，并可导出 JSON 做 A/B 对比。它绕过 `Debug` 适配器
 自带的弹窗，只走 `YOLO::detect()` 这条实际推理路径。
 
-> 测试目标只存在于 `CMAKE_BUILD_TYPE=Debug` 分支（与其它 `tests/` 一致），
-> 用 Release 构建时不会生成。验证阶段请用 Debug 构建；测速另用 Release。
+该目标在 Debug 和 Release 下都可用，但不随默认构建编译。先单独构建：
+
+```bash
+cmake --build --preset default --target detector_verify
+```
 
 ### 6.1 图片 / 视频 / 目录
 
@@ -167,10 +170,10 @@ python tools/ir2onnx.py assets/yolo11.xml out/ir2onnx/yolo11_exact.onnx \
 # 单张图片
 ./build/detector_verify assets/xxx.jpg --config-path=configs/jetson-ir.yaml
 
-# 图片目录（标注结果写入 verify_out/）
-./build/detector_verify /data/armor_imgs --config-path=configs/jetson-ir.yaml -o verify_out
+# 图片目录（标注结果写入 out/detector_verify/）
+./build/detector_verify /data/armor_imgs --config-path=configs/jetson-ir.yaml -o out/detector_verify
 
-# 视频（同时写出 verify_out/annotated.avi 和 JSON）
+# 视频（同时写出 out/detector_verify/annotated.avi 和 JSON）
 ./build/detector_verify match.avi --config-path=configs/jetson-ir.yaml --json cand.json
 ```
 

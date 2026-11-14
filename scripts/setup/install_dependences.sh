@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-CURRENT_DIR=$(pwd)
+PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 set -euo pipefail
 real_user="${SUDO_USER:-$USER}"
 real_home=$(getent passwd "$real_user" | cut -d: -f6)
@@ -140,7 +140,7 @@ if [ ! -d "/opt/ros/humble" ]; then
 fi
 
 mkdir "$real_home/ros_ws/src" || true
-cp ${CURRENT_DIR}/sp_msgs "$real_home/ros_ws/src/" -r
+cp "$PROJECT_ROOT/sp_msgs" "$real_home/ros_ws/src/" -r
 cd "$real_home/ros_ws"
 source /opt/ros/humble/setup.bash || true
 # rosdep update

@@ -165,13 +165,14 @@ class_num: 38        # 与训练类别数一致
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENVINO=OFF
-cmake --build build -j$(nproc)
+cmake --build --preset default
 ```
 
 4. 验证：
 
 ```bash
-./build/detector_video_test --config-path=configs/jetson.yaml path/to/video.avi --tradition=false
+cmake --build --preset default --target detector_verify
+./build/detector_verify path/to/video.avi --config-path=configs/jetson.yaml
 ```
 
 日志出现 `[infer] OpenCV DNN CUDA FP16 backend enabled` 即表示走 GPU。
