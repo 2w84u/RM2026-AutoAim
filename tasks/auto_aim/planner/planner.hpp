@@ -2,6 +2,7 @@
 #define AUTO_AIM__PLANNER_HPP
 
 #include <Eigen/Dense>
+#include <array>
 #include <list>
 #include <optional>
 
@@ -30,11 +31,23 @@ struct Plan
   float pitch_acc;
 };
 
+struct PlannerTrace
+{
+  // Absolute yaw/pitch in rad, velocities in rad/s; HALF_HORIZON is the command time.
+  Trajectory reference;
+  Trajectory solution;
+  std::array<Eigen::Vector4d, HORIZON> aim_xyza;
+  double bullet_speed;
+  double fly_time;
+};
+
 class Planner
 {
 public:
   Eigen::Vector4d debug_xyza;
-  Planner(const std::string & config_path);
+  Planner(const std::string & config_path, bool collect_trace = false);
+
+  const std::optional<PlannerTrace> & trace() const { return trace_; }
 
   Plan plan(Target target, double bullet_speed);
   Plan plan(std::optional<Target> target, double bullet_speed);
@@ -44,6 +57,9 @@ private:
   double pitch_offset_;
   double fire_thresh_;
   double low_speed_delay_time_, high_speed_delay_time_, decision_speed_;
+  double default_bullet_speed_;
+  bool collect_trace_;
+  std::optional<PlannerTrace> trace_;
 
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;
@@ -52,7 +68,9 @@ private:
   void setup_pitch_solver(const std::string & config_path);
 
   Eigen::Matrix<double, 2, 1> aim(const Target & target, double bullet_speed);
-  Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed);
+  Trajectory get_trajectory(
+    Target & target, double yaw0, double bullet_speed,
+    std::array<Eigen::Vector4d, HORIZON> * aim_points);
 };
 
 }  // namespace auto_aim

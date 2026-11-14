@@ -56,6 +56,17 @@ GimbalState Gimbal::state() const
   return state_;
 }
 
+std::optional<GimbalFeedback> Gimbal::feedback() const
+{
+  if (!serial_.connected()) return std::nullopt;
+  const auto generation = serial_.generation();
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!feedback_ || last_feedback_generation_ != generation ||
+      std::chrono::steady_clock::now() - last_feedback_ >= std::chrono::milliseconds(500))
+    return std::nullopt;
+  return feedback_;
+}
+
 std::string Gimbal::str(GimbalMode mode) const
 {
   switch (mode) {
@@ -213,6 +224,7 @@ void Gimbal::read_thread()
         mode_ = GimbalMode::IDLE;
         state_ = {};
         last_feedback_generation_ = 0;
+        feedback_.reset();
       }
       queue_.clear();
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -225,6 +237,7 @@ void Gimbal::read_thread()
         mode_ = GimbalMode::IDLE;
         state_ = {};
         last_feedback_generation_ = 0;
+        feedback_.reset();
       }
       queue_.clear();
     }
@@ -233,7 +246,7 @@ void Gimbal::read_thread()
     if (!read(head_byte, 1)) continue;
 
 #ifndef NDEBUG
-    tools::logger()->debug("[Gimbal] Read first byte: 0x{:02X}", head_byte[0]);
+    // tools::logger()->debug("[Gimbal] Read first byte: 0x{:02X}", head_byte[0]);
     // if (head_byte[0] == gimbal_struct_header[0]) {
     //   tools::logger()->debug("[Gimbal] Detected potential GimbalToVision header byte.");
     // } else if (head_byte[0] == nav_struct_header[0]) {
@@ -262,12 +275,12 @@ void Gimbal::read_thread()
       }
       if (active_generation != serial_.generation()) continue;
       auto crc16_passed = tools::check_crc16(reinterpret_cast<uint8_t *>(&rx_pkt), sizeof(rx_pkt));
-      tools::logger()->debug(
-        "[Gimbal] Received GimbalToVision packet: yaw={:.2f}, pitch={:.2f}, crc16=0x{:04X}, received_crc16=0x{:04X}, crc16_passed={}",
-        rx_pkt.yaw, rx_pkt.pitch, tools::get_crc16(reinterpret_cast<uint8_t *>(&rx_pkt), sizeof(rx_pkt) - sizeof(rx_pkt.crc16)), rx_pkt.crc16, crc16_passed);
+      // tools::logger()->debug(
+      //   "[Gimbal] Received GimbalToVision packet: yaw={:.2f}, pitch={:.2f}, crc16=0x{:04X}, received_crc16=0x{:04X}, crc16_passed={}",
+      //   rx_pkt.yaw, rx_pkt.pitch, tools::get_crc16(reinterpret_cast<uint8_t *>(&rx_pkt), sizeof(rx_pkt) - sizeof(rx_pkt.crc16)), rx_pkt.crc16, crc16_passed);
 
       if (!crc16_passed) {
-        tools::logger()->debug("[Gimbal] CRC16 check failed for GimbalToVision packet.");
+        // tools::logger()->debug("[Gimbal] CRC16 check failed for GimbalToVision packet.");
         continue;
       }
 
@@ -322,6 +335,9 @@ void Gimbal::read_thread()
             tools::logger()->warn("[Gimbal] Invalid mode: {}", rx_pkt.mode);
             break;
         }
+        feedback_ = GimbalFeedback{
+          Eigen::Quaterniond(rx_pkt.q[0], rx_pkt.q[1], rx_pkt.q[2], rx_pkt.q[3]),
+          state_, mode_, t, active_generation};
 #ifndef NDEBUG
         nlohmann::json data;
         data["mode"] = str(mode_);

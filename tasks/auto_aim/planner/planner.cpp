@@ -1,5 +1,7 @@
 #include "planner.hpp"
 
+#include <cmath>
+#include <stdexcept>
 #include <vector>
 
 #include "tools/math_tools.hpp"
@@ -10,7 +12,8 @@ using namespace std::chrono_literals;
 
 namespace auto_aim
 {
-Planner::Planner(const std::string & config_path)
+Planner::Planner(const std::string & config_path, bool collect_trace)
+: collect_trace_(collect_trace)
 {
   auto yaml = tools::load(config_path);
   yaw_offset_ = tools::read<double>(yaml, "yaw_offset") / 57.3;
@@ -19,6 +22,11 @@ Planner::Planner(const std::string & config_path)
   decision_speed_ = tools::read<double>(yaml, "decision_speed");
   high_speed_delay_time_ = tools::read<double>(yaml, "high_speed_delay_time");
   low_speed_delay_time_ = tools::read<double>(yaml, "low_speed_delay_time");
+  default_bullet_speed_ = yaml["default_bullet_speed"]
+    ? yaml["default_bullet_speed"].as<double>() : 22.0;
+  if (!std::isfinite(default_bullet_speed_) || default_bullet_speed_ < 10 ||
+      default_bullet_speed_ > 25)
+    throw std::runtime_error("default_bullet_speed must be within 10..25 m/s for this MPC planner");
 
   setup_yaw_solver(config_path);
   setup_pitch_solver(config_path);
@@ -26,9 +34,10 @@ Planner::Planner(const std::string & config_path)
 
 Plan Planner::plan(Target target, double bullet_speed)
 {
+  trace_.reset();
   // 0. Check bullet speed
-  if (bullet_speed < 10 || bullet_speed > 25) {
-    bullet_speed = 22;
+  if (!std::isfinite(bullet_speed) || bullet_speed < 10 || bullet_speed > 25) {
+    bullet_speed = default_bullet_speed_;
   }
 
   // 1. Predict fly_time
@@ -42,14 +51,17 @@ Plan Planner::plan(Target target, double bullet_speed)
     }
   }
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
+  if (bullet_traj.unsolvable) return {false};
   target.predict(bullet_traj.fly_time);
 
   // 2. Get trajectory
   double yaw0;
   Trajectory traj;
+  PlannerTrace trace;
   try {
     yaw0 = aim(target, bullet_speed)(0);
-    traj = get_trajectory(target, yaw0, bullet_speed);
+    traj = get_trajectory(
+      target, yaw0, bullet_speed, collect_trace_ ? &trace.aim_xyza : nullptr);
   } catch (const std::exception & e) {
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
     return {false};
@@ -90,11 +102,24 @@ Plan Planner::plan(Target target, double bullet_speed)
       traj(0, HALF_HORIZON + shoot_offset_) - yaw_solver_->work->x(0, HALF_HORIZON + shoot_offset_),
       traj(2, HALF_HORIZON + shoot_offset_) -
         pitch_solver_->work->x(0, HALF_HORIZON + shoot_offset_)) < fire_thresh_;
+
+  if (collect_trace_) {
+    trace.reference = traj;
+    trace.reference.row(0).array() += yaw0;
+    trace.solution.block(0, 0, 2, HORIZON) = yaw_solver_->work->x;
+    trace.solution.block(2, 0, 2, HORIZON) = pitch_solver_->work->x;
+    trace.solution.row(0).array() += yaw0;
+    trace.bullet_speed = bullet_speed;
+    trace.fly_time = bullet_traj.fly_time;
+    debug_xyza = trace.aim_xyza[HALF_HORIZON];
+    trace_ = std::move(trace);
+  }
   return plan;
 }
 
 Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 {
+  trace_.reset();
   if (!target.has_value()) return {false};
 
   double delay_time =
@@ -176,7 +201,9 @@ Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_sp
   return {tools::limit_rad(azim + yaw_offset_), -bullet_traj.pitch - pitch_offset_};
 }
 
-Trajectory Planner::get_trajectory(Target & target, double yaw0, double bullet_speed)
+Trajectory Planner::get_trajectory(
+  Target & target, double yaw0, double bullet_speed,
+  std::array<Eigen::Vector4d, HORIZON> * aim_points)
 {
   Trajectory traj;
 
@@ -185,10 +212,13 @@ Trajectory Planner::get_trajectory(Target & target, double yaw0, double bullet_s
 
   target.predict(DT);  // [0] = -HALF_HORIZON * DT -> [HHALF_HORIZON] = 0
   auto yaw_pitch = aim(target, bullet_speed);
+  Eigen::Vector4d current_aim = debug_xyza;
 
   for (int i = 0; i < HORIZON; i++) {
+    if (aim_points) (*aim_points)[i] = current_aim;
     target.predict(DT);
     auto yaw_pitch_next = aim(target, bullet_speed);
+    current_aim = debug_xyza;
 
     auto yaw_vel = tools::limit_rad(yaw_pitch_next(0) - yaw_pitch_last(0)) / (2 * DT);
     auto pitch_vel = (yaw_pitch_next(1) - yaw_pitch_last(1)) / (2 * DT);

@@ -39,6 +39,9 @@ cmake --build --preset default
 可先在当前终端执行 `export CMAKE_BUILD_PARALLEL_LEVEL=8`。
 
 默认应用共四个：`sentry`、`standard_mpc`、`auto_aim_debug_mpc`、`auto_buff_debug_mpc`。
+`auto_aim_debug_mpc` 是实机 GUI，可显示识别、跟踪、MPC 轨迹、原始姿态和期望姿态。
+默认仅接收反馈；`--enable-control` 开启云台跟随，始终不开火，见
+[自瞄 MPC 可视化说明](docs/debugging/auto-aim-mpc-gui.md)。
 缺少 ROS2 或 `sp_msgs` 时跳过 `sentry`，其余 MPC 目标仍可编译。
 `sp_msgs/` 是独立的 ROS2 消息包，需要先放入 ROS2 工作空间并通过 colcon 构建。
 

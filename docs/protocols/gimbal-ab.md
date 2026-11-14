@@ -42,10 +42,11 @@ ROS 消息见 [sp-msgs.md](sp-msgs.md)。
 | 解算姿态 | `Gimbal::q(timestamp)`；当前从 AB 反馈的 yaw/pitch 合成四元数，roll 固定为 0 |
 | 标定采集姿态 | `Gimbal::try_q(timestamp)`，沿用相同姿态来源；无有效数据或时间差超出 50 ms 时拒绝配对，不返回默认姿态 |
 | 包内四元数 | `GimbalToVision::q[4]`；自瞄/采集尚未使用，`gimbal_feedback_test` 实机工具直接读取并可视化 |
+| 自瞄 GUI | `auto_aim_debug_mpc` 通过 `Gimbal::feedback()` 显示原始四元数、实际解算姿态、观测目标与期望云台姿态；默认无串口发送，`--enable-control` 开启跟随、固定不开火 |
 | 弹速/计数/关节状态 | `Gimbal::state()`；弹速用于哨兵 Aimer 和 MPC Planner |
 | 达妙 IMU | 哨兵创建并传给 `SentryDecider`，但当前导航状态机只保存指针、没有读取；自瞄 Solver 也未使用它 |
 | 哨兵导航指令 | 来自 `SentryDecider` 的时间/血量状态机，当前主循环未采用 ROS `cmd_vel` |
-| 输出 | 哨兵通过 `gimbal.send(Command)` 发角度；MPC 入口还发送规划角速度和角加速度 |
+| 输出 | 哨兵通过 `gimbal.send(Command)` 发角度；MPC 控制入口还发送角速度和角加速度；GUI 仅在显式指定 `--enable-control` 时发送跟随/停控帧，开火位固定关闭 |
 
 后续替换数据来源时，需要一起确认姿态坐标系、roll 是否保留、时间戳对齐和弹速来源。
 当前现状已定位，本轮没有切换这些输入。

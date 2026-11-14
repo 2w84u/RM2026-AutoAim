@@ -29,6 +29,10 @@ cmake --build --preset default --target gimbal_test
 实时识别可直接使用 `detector_verify --camera --config-path=configs/sentry.yaml`；
 详细选项见 [模型验证说明](../docs/ir-to-onnx.md)。
 
+相机到 MPC 的实时链路使用现有 `auto_aim_debug_mpc` 应用，显示识别、跟踪、规划轨迹、
+原始反馈与期望姿态；默认仅接收反馈，`--enable-control` 开启跟随并固定不开火，见
+[自瞄 MPC 实机可视化](../docs/debugging/auto-aim-mpc-gui.md)。
+
 ## 原始四元数实机诊断
 
 这个入口是用于连接真实云台板的功能工具，不是模拟或自动验证代码。

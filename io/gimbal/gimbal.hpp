@@ -39,6 +39,16 @@ struct GimbalState
   uint16_t bullet_count;
 };
 
+struct GimbalFeedback
+{
+  // Original AB payload, wxyz, body -> world; invalid data stays invalid.
+  Eigen::Quaterniond q{0, 0, 0, 0};
+  GimbalState state{};
+  GimbalMode mode = GimbalMode::IDLE;
+  std::chrono::steady_clock::time_point received{};
+  uint64_t generation = 0;
+};
+
 class Gimbal
 {
 public:
@@ -54,6 +64,7 @@ public:
 
   GimbalMode mode() const;
   GimbalState state() const;
+  std::optional<GimbalFeedback> feedback() const;
   std::string str(GimbalMode mode) const;
   Eigen::Quaterniond q(std::chrono::steady_clock::time_point t);
   // Calibration must distinguish valid zero rotation from missing telemetry.
@@ -81,6 +92,7 @@ private:
 
   GimbalMode mode_ = GimbalMode::IDLE;
   GimbalState state_{};
+  std::optional<GimbalFeedback> feedback_;
   std::chrono::steady_clock::time_point last_feedback_{};
   uint64_t last_feedback_generation_ = 0;
   mutable std::mutex q_mutex_;
