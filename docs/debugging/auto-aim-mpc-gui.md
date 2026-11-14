@@ -47,6 +47,54 @@ GUI 按 `q` / Esc 或终端 Ctrl+C 退出。支持窗口状态查询的后端也
 云台 X 正方向，绿色是当前观测装甲板的法向；灰色为世界 XYZ 轴。
 沿 Z 负方向看时，正 yaw 为逆时针。
 
+## Detect 分段耗时
+
+调试入口默认启用分段计时，并打开 `Detect timing (ms)` 窗口；主画面第二行同步显示
+预处理、`forward`、后处理及其他开销摘要。只观察检测耗时、不控制云台时显式运行：
+
+```bash
+./build/auto_aim_debug_mpc configs/sentry.yaml --enable-control=false
+```
+
+计时窗口约每 200 ms 更新一次，显示当前帧、最近 60 帧均值、P95、最大值及当前占比。
+候选框数量按原始输出、置信度筛选、NMS、最终装甲板四步显示。
+`T` 隐藏/重新打开计时窗口，`R` 清空统计；隐藏窗口时仍持续采集计时。
+`--detect-timing=false` 完全关闭本入口的分段计时和计时窗口。
+
+YOLO11、YOLOv5、YOLOv8 的 OpenCV DNN / OpenVINO 路径均包含以下阶段：
+
+| 阶段 | 测量内容 |
+|---|---|
+| ROI / shape setup | ROI 选择、输入缩放尺寸计算与相关准备 |
+| Resize / padding | 图像内存分配、补边、缩放 |
+| Blob / tensor packing | ONNX 的 `blobFromImage`；OpenVINO 的输入张量包装 |
+| Create infer request | OpenVINO 推理请求创建；OpenCV DNN 不执行此阶段 |
+| Input binding | `setInput` / `set_input_tensor` 的调用耗时 |
+| Network forward / infer | `net.forward()` / `infer_request.infer()` 的主机等待耗时 |
+| Output view / copy | 输出张量获取、reshape 或 clone |
+| Output transpose | YOLO11 / YOLOv8 输出转置 |
+| Decode / score filtering | 遍历输出、找类别/置信度、还原框和物理关键点 |
+| NMS | 非极大值抑制 |
+| Armor / keypoint construction | 装甲板对象创建、角点排序和 ROI 偏移处理 |
+| Classifier image crop | YOLOv8 的数字区域裁剪 |
+| Number classification | YOLOv8 的数字分类器调用 |
+| Traditional corner refinement | YOLOv5 在启用传统方法时的角点二次矫正 |
+| Armor filtering / normalization | 类别、阈值等过滤与中心坐标归一化 |
+| Detector debug drawing | 检测器自带的调试绘图；本入口使用 `debug=false`，因此不执行 |
+| Other / dispatch | 检测封装、函数收尾和未归入上述阶段的剩余时间 |
+
+阶段不执行时显示 `--`，不能将其理解成实际耗时为 0；各阶段统计只使用执行过该阶段的帧。
+启动阶段不会被自动丢弃，初次推理较慢时可等待其移出 60 帧窗口，或按 R 重置统计。
+当前阶段耗时均为互不重叠的主机墙钟区间，合计对应同一次 `detect()` 总耗时。
+计时窗口、跟踪、规划、相机采集和主 GUI 绘制都不计入 `detect()`。
+
+`forward()` 可能包含数据传输、同步、内部转换及不支持算子的 CPU 回退，不能将其当作
+纯 GPU kernel 耗时；`setInput` 也不能直接命名为显存上传耗时。此实现未插入额外 CUDA
+同步或 GPU 事件。后端栏明确显示请求的设备，实际后端选择另见启动日志。
+
+公共 `YOLO` 接口提供 `set_timing_enabled(bool)` 和 `timing()`，其他入口默认不开启计时。
+多线程检测器单独调用 `postprocess()` 时，统计仅涵盖后处理，不包含其外部推理过程。
+
 ## 四元数与欧拉角
 
 四元数顺序统一为 `w x y z`；欧拉角按 ZYX 显示 `yaw / pitch / roll`，单位为度。

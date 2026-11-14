@@ -25,6 +25,7 @@
 #include "tasks/auto_aim/yolo.hpp"
 #include "tools/exiter.hpp"
 #include "tools/logger.hpp"
+#include "detection_timing_panel.hpp"
 
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
@@ -32,7 +33,8 @@ using namespace std::chrono_literals;
 const std::string keys =
   "{help h usage ? |                     | 输出命令行参数说明}"
   "{@config-path   | configs/sentry.yaml | yaml 配置文件路径 }"
-  "{enable-control | true                | 开启云台跟随，始终不开火；默认仅显示 }";
+  "{enable-control | true                | 开启云台跟随，始终不开火；默认仅显示 }"
+  "{detect-timing  | true                | 显示 detect 分段耗时及最近 60 帧统计 }";
 
 namespace
 {
@@ -457,7 +459,7 @@ void draw_directions(cv::Mat & canvas, const std::optional<Eigen::Quaterniond> &
   text(canvas, control_status, 990, 986, command_color, 0.5);
 }
 
-int run(const std::string & config_path, bool enable_control)
+int run(const std::string & config_path, bool enable_control, bool detect_timing)
 {
   const auto yaml = YAML::LoadFile(config_path);
   const double default_speed = yaml["default_bullet_speed"].as<double>();
@@ -469,12 +471,16 @@ int run(const std::string & config_path, bool enable_control)
   io::Gimbal gimbal(config_path);
   io::Camera camera(config_path);
   auto_aim::YOLO yolo(config_path, false);
+  yolo.set_timing_enabled(detect_timing);
+  DetectionTimingPanel timing_panel(detect_timing);
   auto_aim::Solver solver(config_path);
   auto tracker = std::make_unique<auto_aim::Tracker>(config_path, solver);
   PlanningWorker worker(config_path, enable_control ? &gimbal : nullptr);
   tools::logger()->info("自瞄实机可视化：{}", enable_control
     ? "已启用云台跟随，开火位始终关闭" : "仅接收串口反馈，不发送任何控制/开火帧");
   tools::logger()->info("弹速反馈不可用时读取配置默认值 {} m/s", default_speed);
+  if (detect_timing)
+    tools::logger()->info("detect 分段计时已开启：T 显示/隐藏计时窗口，R 清除最近 60 帧统计");
 
   const std::string window = enable_control ? "Auto aim MPC - FOLLOW / NO FIRE" : "Auto aim MPC - RX ONLY";
   cv::namedWindow(window, cv::WINDOW_NORMAL);
@@ -561,6 +567,14 @@ int run(const std::string & config_path, bool enable_control)
     text(canvas, fmt::format("{:.1f} FPS | detect {:.1f} ms | track {:.1f} ms | image age {:.1f} ms",
       frame_seconds > 0 ? 1 / frame_seconds : 0, detection_ms, tracker_ms, image_age), 22, 73,
       cv::Scalar(255, 255, 255), 0.55);
+    const auto & detect_profile = yolo.timing();
+    if (detect_timing && detect_profile.valid) {
+      text(canvas, fmt::format("pre {:.2f} | forward {:.2f} | post {:.2f} | other {:.2f} ms | T timing / R reset",
+        detect_profile.preprocessing_ms(), detect_profile.ms(auto_aim::DetectStage::forward),
+        detect_profile.postprocessing_ms(), detect_profile.ms(auto_aim::DetectStage::other)),
+        22, 96, cv::Scalar(255, 255, 255), 0.49);
+      timing_panel.add(detect_profile);
+    }
     text(canvas, "Blue detection | Green track | Yellow aim prediction | Magenta MPC / command", 18, 795,
       foreground, 0.53);
     text(canvas, fmt::format("Feedback: {} | matched pose: {} | mode: {}", feedback ? "LIVE" : "MISSING",
@@ -612,8 +626,11 @@ int run(const std::string & config_path, bool enable_control)
     draw_curve(canvas, {495, 815, 475, 180}, view, 2, "Pitch: REF / MPC / RX",
       raw_angles ? std::optional<double>((*raw_angles)[1]) : std::nullopt);
     draw_directions(canvas, raw_direction, command_q, armor_q, view.control_status);
+    timing_panel.show();
     cv::imshow(window, canvas);
     const int key = cv::waitKey(1);
+    if (key == 't' || key == 'T') timing_panel.toggle();
+    if (key == 'r' || key == 'R') timing_panel.reset();
     if (key == 'q' || key == 'Q' || key == 27) {
       exit_reason = key == 27 ? "Esc key" : "q / Q key";
       break;
@@ -648,6 +665,7 @@ int run(const std::string & config_path, bool enable_control)
     }
   }
   worker.stop();
+  timing_panel.close();
   tools::logger()->info("自瞄可视化正常退出：{}，已处理 {} 帧", exit_reason, frame_count);
   if (!window_closed) cv::destroyWindow(window);
   return 0;
@@ -663,12 +681,13 @@ int main(int argc, char * argv[])
   }
   const auto config_path = cli.get<std::string>(0);
   const auto enable_control = cli.get<bool>("enable-control");
+  const auto detect_timing = cli.get<bool>("detect-timing");
   if (!cli.check()) {
     cli.printErrors();
     return 1;
   }
   try {
-    return run(config_path, enable_control);
+    return run(config_path, enable_control, detect_timing);
   } catch (const std::exception & e) {
     tools::logger()->error("自瞄可视化退出：{}", e.what());
     return 1;

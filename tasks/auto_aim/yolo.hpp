@@ -9,6 +9,7 @@
 #include <opencv2/opencv.hpp>
 
 #include "armor.hpp"
+#include "detection_timing.hpp"
 
 namespace auto_aim
 {
@@ -17,6 +18,7 @@ namespace auto_aim
 class YOLOBase
 {
 public:
+  friend class YOLO;
   virtual ~YOLOBase() = default;
   virtual std::list<Armor> detect(const cv::Mat & img, int frame_count) = 0;
   virtual std::list<Armor> postprocess(double, cv::Mat &, const cv::Mat &, int)
@@ -30,6 +32,9 @@ public:
   {
     throw std::logic_error("Text prompts are not implemented for this detector");
   }
+
+protected:
+  DetectionProfiler profiler_;
 };
 
 // Single model-selection seam: replace create_season_detector() in yolo.cpp
@@ -43,6 +48,8 @@ public:
                                const cv::Mat & bgr_img, int frame_count);
   bool supports_text_prompts() const;
   void set_text_prompts(const std::vector<std::string> & prompts);
+  void set_timing_enabled(bool enabled);
+  const DetectionTiming & timing() const;
 
 private:
   std::unique_ptr<YOLOBase> yolo_;

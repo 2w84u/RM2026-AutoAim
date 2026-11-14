@@ -31,14 +31,24 @@ YOLO::YOLO(const std::string & config_path, bool debug)
 
 std::list<Armor> YOLO::detect(const cv::Mat & img, int frame_count)
 {
-  return yolo_->detect(img, frame_count);
+  yolo_->profiler_.begin();
+  auto armors = yolo_->detect(img, frame_count);
+  yolo_->profiler_.finish(armors.size());
+  return armors;
 }
 
 std::list<Armor> YOLO::postprocess(
   double scale, cv::Mat & output, const cv::Mat & bgr_img, int frame_count)
 {
-  return yolo_->postprocess(scale, output, bgr_img, frame_count);
+  yolo_->profiler_.begin(true);
+  auto armors = yolo_->postprocess(scale, output, bgr_img, frame_count);
+  yolo_->profiler_.finish(armors.size());
+  return armors;
 }
+
+void YOLO::set_timing_enabled(bool enabled) { yolo_->profiler_.enable(enabled); }
+
+const DetectionTiming & YOLO::timing() const { return yolo_->profiler_.timing(); }
 
 bool YOLO::supports_text_prompts() const { return yolo_->supports_text_prompts(); }
 

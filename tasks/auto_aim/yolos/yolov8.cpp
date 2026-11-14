@@ -72,6 +72,8 @@ YOLOV8::YOLOV8(const std::string & config_path, bool debug)
       model_path_ + ")");
 #endif
   }
+  profiler_.context("YOLOV8", use_openvino_ ? "OpenVINO / " + device_
+    : "OpenCV DNN / requested " + device_);
 }
 
 std::list<Armor> YOLOV8::detect(const cv::Mat & raw_img, int frame_count)
@@ -100,28 +102,39 @@ std::list<Armor> YOLOV8::detect(const cv::Mat & raw_img, int frame_count)
   auto h = static_cast<int>(bgr_img.rows * scale);
   auto w = static_cast<int>(bgr_img.cols * scale);
 
+  profiler_.mark(DetectStage::roi);
   // preproces
   auto input = cv::Mat(416, 416, CV_8UC3, cv::Scalar(0, 0, 0));
   auto roi = cv::Rect(0, 0, w, h);
   cv::resize(bgr_img, input(roi), {w, h});
+  profiler_.mark(DetectStage::resize);
 
   cv::Mat output;
   if (use_openvino_) {
 #ifdef SPVISION_WITH_OPENVINO
     ov::Tensor input_tensor(ov::element::u8, {1, 416, 416, 3}, input.data);
+    profiler_.mark(DetectStage::pack);
     auto infer_request = compiled_model_.create_infer_request();
+    profiler_.mark(DetectStage::request);
     infer_request.set_input_tensor(input_tensor);
+    profiler_.mark(DetectStage::bind);
     infer_request.infer();
+    profiler_.mark(DetectStage::forward);
 
     auto output_tensor = infer_request.get_output_tensor();
     auto output_shape = output_tensor.get_shape();
     output = cv::Mat(output_shape[1], output_shape[2], CV_32F, output_tensor.data()).clone();
+    profiler_.mark(DetectStage::output);
 #endif
   } else {
     cv::Mat blob = cv::dnn::blobFromImage(input, 1.0 / 255.0, cv::Size(), cv::Scalar(), true);
+    profiler_.mark(DetectStage::pack);
     net_.setInput(blob);
+    profiler_.mark(DetectStage::bind);
     cv::Mat out = net_.forward();
+    profiler_.mark(DetectStage::forward);
     output = out.reshape(1, out.size[1]);
+    profiler_.mark(DetectStage::output);
   }
 
   return parse(scale, output, raw_img, frame_count);
@@ -132,6 +145,7 @@ std::list<Armor> YOLOV8::parse(
 {
   // for each row: xywh + classess
   cv::transpose(output, output);
+  profiler_.mark(DetectStage::layout);
 
   std::vector<int> ids;
   std::vector<float> confidences;
@@ -171,8 +185,11 @@ std::list<Armor> YOLOV8::parse(
     armors_key_points.emplace_back(armor_key_points);
   }
 
+  profiler_.mark(DetectStage::decode);
   std::vector<int> indices;
   cv::dnn::NMSBoxes(boxes, confidences, score_threshold_, nms_threshold_, indices);
+  profiler_.mark(DetectStage::nms);
+  profiler_.candidates(output.rows, static_cast<int>(boxes.size()), static_cast<int>(indices.size()));
 
   std::list<Armor> armors;
   for (const auto & i : indices) {
@@ -184,26 +201,36 @@ std::list<Armor> YOLOV8::parse(
     }
   }
 
+  profiler_.mark(DetectStage::construct);
   for (auto it = armors.begin(); it != armors.end();) {
     it->pattern = get_pattern(bgr_img, *it);
+    profiler_.mark(DetectStage::pattern);
     classifier_.classify(*it);
+    profiler_.mark(DetectStage::classify);
 
     if (!check_name(*it)) {
       it = armors.erase(it);
+      profiler_.mark(DetectStage::filter);
       continue;
     }
 
     it->type = get_type(*it);
     if (!check_type(*it)) {
       it = armors.erase(it);
+      profiler_.mark(DetectStage::filter);
       continue;
     }
 
     it->center_norm = get_center_norm(bgr_img, it->center);
     ++it;
+    profiler_.mark(DetectStage::filter);
   }
 
-  if (debug_) draw_detections(bgr_img, armors, frame_count);
+  profiler_.mark(DetectStage::filter);
+  if (debug_) {
+    draw_detections(bgr_img, armors, frame_count);
+    profiler_.mark(DetectStage::debug_draw);
+  }
 
   return armors;
 }
