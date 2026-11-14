@@ -56,6 +56,11 @@ public:
   GimbalState state() const;
   std::string str(GimbalMode mode) const;
   Eigen::Quaterniond q(std::chrono::steady_clock::time_point t);
+  // Calibration must distinguish valid zero rotation from missing telemetry.
+  // Samples outside the requested time window are not usable for image pairing.
+  std::optional<Eigen::Quaterniond> try_q(
+    std::chrono::steady_clock::time_point t,
+    std::chrono::milliseconds max_delta = std::chrono::milliseconds(50));
 
   void send(
     bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,

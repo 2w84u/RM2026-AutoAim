@@ -12,7 +12,7 @@
 | `tasks/`、`io/`、`tools/` | 算法、设备/通信、公共 C++ 工具及模型转换脚本 |
 | `tests/` | 按用途分类的有效测试，见 [测试索引](tests/README.md) |
 | `tests/archive/` | 重复示例和旧协议实验，不注册编译目标 |
-| `calibration/` | 标定工具，按目标单独编译 |
+| `calibration/` | 标定工具，按目标单独编译，见 [棋盘格标定说明](calibration/README.md) |
 | `configs/`、`assets/` | 机器人参数、模型；PlotJuggler 布局位于 `configs/plotjuggler/` |
 | `scripts/setup/`、`scripts/deploy/` | 依赖安装/交换空间脚本、自启/守护脚本 |
 | `docs/protocols/` | 当前 AB 协议说明、裁判协议 PDF/文本、ROS 消息说明 |
@@ -48,6 +48,7 @@ Debug 和 Release 均不会自动编译交互测试或标定工具；需要哪�
 cmake --build --preset default --target detector_verify
 cmake --build --preset default --target gimbal_test
 cmake --build --preset default --target calibrate_camera
+cmake --build --preset default --target capture
 ./build/detector_verify --help
 ```
 
@@ -60,8 +61,9 @@ cmake --build build/contracts --parallel 8
 ctest --test-dir build/contracts --output-on-failure
 ```
 
-旧 C 板 CAN/UART 实现默认关闭。`-DENABLE_LEGACY_CBOARD=ON` 仅恢复旧传输、
-`CommandGener` 实现和手动标定目标 `capture`，不会注册归档应用或测试。
+旧 C 板 CAN/UART 实现默认关闭。`-DENABLE_LEGACY_CBOARD=ON` 仅恢复旧传输及
+`CommandGener` 实现，不会注册归档应用或测试。标定采集 `capture` 使用 Gimbal AB 接口，
+可同时保存图片和对应四元数，详见 [标定采集说明](calibration/README.md)。
 当前协议字段和数据来源见 [AB 协议与数据链路](docs/protocols/gimbal-ab.md)。
 
 ## 部署与输出

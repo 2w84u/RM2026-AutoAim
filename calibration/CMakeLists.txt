@@ -5,8 +5,6 @@ foreach(name calibrate_camera calibrate_handeye calibrate_robotworld_handeye spl
   target_link_libraries(${name} PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp tools)
 endforeach()
 
-# capture still uses the old C-board transport; it is never a default target.
-if(ENABLE_LEGACY_CBOARD)
-  add_executable(capture capture.cpp)
-  target_link_libraries(capture PRIVATE ${OpenCV_LIBS} fmt::fmt tools io)
-endif()
+# The parent directory is EXCLUDE_FROM_ALL: capture is still an explicit target.
+add_executable(capture capture.cpp)
+target_link_libraries(capture PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io)

@@ -83,7 +83,7 @@ t_camera2gimbal: [0.13160669975045827, 0.10377721766577375, 0.024908271912914642
 # Replace the example paths with two distinct udev /dev/serial/by-id/...,
 # /dev/serial/by-path/... or your own /dev/skywalker/* stable symlinks.
 # See docs/serial-hotplug.md before deploying.
-com_port: "/dev/ttyUSB0"       # EXAMPLE ONLY: gimbal
+com_port: "/dev/serial/by-id/usb-Zephyr_Project_SkyWalker_Vision_313336353233510B001A0012-if00"       # EXAMPLE ONLY: gimbal
 nav_com_port: "/dev/ttyUSB1"   # EXAMPLE ONLY: navigation
 yaw_kp: 0
 yaw_kd: 0

@@ -1,93 +1,156 @@
 #include <fmt/core.h>
+#include <yaml-cpp/yaml.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <memory>
 #include <opencv2/opencv.hpp>
+#include <optional>
+#include <stdexcept>
 
+#include "calibration/chessboard.hpp"
 #include "io/camera.hpp"
-#include "io/cboard.hpp"
+#include "io/gimbal/gimbal.hpp"
+#include "tools/exiter.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
 
 const std::string keys =
   "{help h usage ?  |                          | 输出命令行参数说明}"
-  "{@config-path c  | configs/calibration.yaml | yaml配置文件路径 }"
-  "{output-folder o |      assets/img_with_q   | 输出文件夹路径   }";
+  "{@config-path   | configs/calibration.yaml | yaml配置文件路径 }"
+  "{output-folder o | assets/img_with_q        | 输出文件夹路径   }"
+  "{images-only     | false                    | 仅保存图片，不连接云台 }";
 
-void write_q(const std::string q_path, const Eigen::Quaterniond & q)
+namespace
 {
-  std::ofstream q_file(q_path);
-  Eigen::Vector4d xyzw = q.coeffs();
-  // 输出顺序为wxyz
-  q_file << fmt::format("{} {} {} {}", xyzw[3], xyzw[0], xyzw[1], xyzw[2]);
-  q_file.close();
-}
+namespace fs = std::filesystem;
 
-void capture_loop(
-  const std::string & config_path, const std::string & can, const std::string & output_folder)
+void save_sample(
+  const fs::path & folder, int index, const cv::Mat & image,
+  const std::optional<Eigen::Quaterniond> & q)
 {
-  io::CBoard cboard(config_path);
-  io::Camera camera(config_path);
-  cv::Mat img;
-  std::chrono::steady_clock::time_point timestamp;
+  const auto image_path = folder / fmt::format("{}.jpg", index);
+  const auto q_path = folder / fmt::format("{}.txt", index);
+  if (fs::exists(image_path) || fs::exists(q_path))
+    throw std::runtime_error("图片或姿态文件已存在，未覆盖");
+  if (q && (!q->coeffs().allFinite() || std::abs(q->norm() - 1.0) > 1e-6))
+    throw std::runtime_error("四元数无效，未保存");
 
-  int count = 0;
-  while (true) {
-    camera.read(img, timestamp);
-    Eigen::Quaterniond q = cboard.imu_at(timestamp);
-
-    // 在图像上显示欧拉角，用来判断imuabs系的xyz正方向，同时判断imu是否存在零漂
-    auto img_with_ypr = img.clone();
-    Eigen::Vector3d zyx = tools::eulers(q, 2, 1, 0) * 57.3;  // degree
-    tools::draw_text(img_with_ypr, fmt::format("Z {:.2f}", zyx[0]), {40, 40}, {0, 0, 255});
-    tools::draw_text(img_with_ypr, fmt::format("Y {:.2f}", zyx[1]), {40, 80}, {0, 0, 255});
-    tools::draw_text(img_with_ypr, fmt::format("X {:.2f}", zyx[2]), {40, 120}, {0, 0, 255});
-
-    std::vector<cv::Point2f> centers_2d;
-    auto success = cv::findCirclesGrid(img, cv::Size(10, 7), centers_2d);  // 默认是对称圆点图案
-    cv::drawChessboardCorners(img_with_ypr, cv::Size(10, 7), centers_2d, success);  // 显示识别结果
-    cv::resize(img_with_ypr, img_with_ypr, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
-
-    // 按“s”保存图片和对应四元数，按“q”退出程序
-    cv::imshow("Press s to save, q to quit", img_with_ypr);
-    auto key = cv::waitKey(1);
-    if (key == 'q')
-      break;
-    else if (key != 's')
-      continue;
-
-    // 保存图片和四元数
-    count++;
-    auto img_path = fmt::format("{}/{}.jpg", output_folder, count);
-    auto q_path = fmt::format("{}/{}.txt", output_folder, count);
-    cv::imwrite(img_path, img);
-    write_q(q_path, q);
-    tools::logger()->info("[{}] Saved in {}", count, output_folder);
+  try {
+    // Write pose first so a newly visible image always has its matching pose.
+    if (q) {
+      std::ofstream file;
+      file.exceptions(std::ios::failbit | std::ios::badbit);
+      file.open(q_path);
+      file << std::setprecision(17) << q->w() << ' ' << q->x() << ' ' << q->y() << ' ' << q->z()
+           << '\n';
+      file.close();
+    }
+    if (!cv::imwrite(image_path.string(), image))
+      throw std::runtime_error("图片写入失败");
+  } catch (...) {
+    // Remove files created by this attempt if either half failed to write.
+    std::error_code ignored;
+    fs::remove(image_path, ignored);
+    if (q) fs::remove(q_path, ignored);
+    throw;
   }
-
-  // 离开该作用域时，camera和cboard会自动关闭
 }
+
+void capture_loop(const std::string & config_path, const fs::path & output_folder, bool images_only)
+{
+  const auto yaml = YAML::LoadFile(config_path);
+  const cv::Size pattern_size(yaml["pattern_cols"].as<int>(), yaml["pattern_rows"].as<int>());
+  tools::logger()->info("棋盘格内角点：{} 列 × {} 行", pattern_size.width, pattern_size.height);
+
+  tools::Exiter exiter;
+  std::unique_ptr<io::Gimbal> gimbal;
+  if (!images_only) {
+    tools::logger()->info("同步记录 Gimbal yaw/pitch 合成姿态（roll=0），四元数顺序 w x y z");
+    gimbal = std::make_unique<io::Gimbal>(config_path);
+  }
+  io::Camera camera(config_path);
+  cv::Mat image;
+  std::chrono::steady_clock::time_point timestamp;
+  int index = 1;
+
+  while (!exiter.exit()) {
+    camera.read(image, timestamp);
+    if (image.empty()) continue;
+
+    // Associate pose with this image before detection/display adds any latency.
+    // Missing/stale telemetry remains empty instead of becoming identity pose.
+    const auto q = gimbal ? gimbal->try_q(timestamp) : std::nullopt;
+    auto drawing = image.clone();
+    if (q) {
+      const Eigen::Vector3d ypr = tools::eulers(*q, 2, 1, 0) * 180.0 / CV_PI;
+      tools::draw_text(drawing, fmt::format("yaw   {:.2f}", ypr[0]), {40, 40}, {0, 0, 255});
+      tools::draw_text(drawing, fmt::format("pitch {:.2f}", ypr[1]), {40, 80}, {0, 0, 255});
+      tools::draw_text(drawing, fmt::format("roll  {:.2f}", ypr[2]), {40, 120}, {0, 0, 255});
+    } else {
+      tools::draw_text(
+        drawing, images_only ? "Images only" : "Waiting for matching gimbal pose",
+        {40, 40}, {0, 0, 255});
+    }
+
+    std::vector<cv::Point2f> corners;
+    const auto detected = calibration::find_chessboard_corners(image, pattern_size, corners);
+    cv::drawChessboardCorners(drawing, pattern_size, corners, detected);
+    cv::resize(drawing, drawing, {}, 0.5, 0.5);
+    cv::imshow("Press s to save, q to quit", drawing);
+    const auto key = cv::waitKey(1);
+    if (key == 'q' || key == 'Q') break;
+    if (key != 's' && key != 'S') continue;
+
+    if (!detected) {
+      tools::logger()->warn("未检测到完整棋盘格，本帧未保存");
+      continue;
+    }
+    if (!images_only && !q) {
+      tools::logger()->warn("没有与图像时刻匹配的有效姿态（允许偏差 50 ms），本帧未保存");
+      continue;
+    }
+
+    // Reusing an output directory must not overwrite earlier captures.
+    while (fs::exists(output_folder / fmt::format("{}.jpg", index)) ||
+           fs::exists(output_folder / fmt::format("{}.txt", index)))
+      ++index;
+    try {
+      save_sample(output_folder, index, image, q);
+      tools::logger()->info(
+        "[{}] 已保存{}：{}", index, images_only ? "图片" : "图片和四元数", output_folder.string());
+      ++index;
+    } catch (const std::exception & e) {
+      tools::logger()->error("保存失败：{}", e.what());
+    }
+  }
+}
+}  // namespace
 
 int main(int argc, char * argv[])
 {
-  // 读取命令行参数
   cv::CommandLineParser cli(argc, argv, keys);
   if (cli.has("help")) {
     cli.printMessage();
     return 0;
   }
-  auto config_path = cli.get<std::string>(0);
-  auto output_folder = cli.get<std::string>("output-folder");
+  const auto config_path = cli.get<std::string>(0);
+  const auto output_folder = cli.get<std::string>("output-folder");
+  const auto images_only = cli.get<bool>("images-only");
+  if (!cli.check()) {
+    cli.printErrors();
+    return 1;
+  }
 
-  // 新建输出文件夹
-  std::filesystem::create_directory(output_folder);
-
-  tools::logger()->info("默认标定板尺寸为10列7行");
-  // 主循环，保存图片和对应四元数
-  capture_loop(config_path, "can0", output_folder);
-
-  tools::logger()->warn("注意四元数输出顺序为wxyz");
-
+  try {
+    std::filesystem::create_directories(output_folder);
+    capture_loop(config_path, output_folder, images_only);
+  } catch (const std::exception & e) {
+    tools::logger()->error("采集失败：{}", e.what());
+    return 1;
+  }
   return 0;
 }

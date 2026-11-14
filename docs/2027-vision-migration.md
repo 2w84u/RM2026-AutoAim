@@ -22,7 +22,8 @@
 ## 清理策略
 
 - CBoard/CBoardUART/SocketCAN 和相关实验入口不在默认构建中。
-- `-DENABLE_LEGACY_CBOARD=ON` 仅恢复旧传输实现及旧标定采集目标 `capture`；归档入口不自动恢复构建。
+- `-DENABLE_LEGACY_CBOARD=ON` 仅恢复旧传输和 `CommandGener` 实现；归档入口不自动恢复构建。
+- 标定采集 `capture` 使用当前 Gimbal AB 接口，按目标手动编译，不依赖旧 C 板传输。
 - 历史应用和重复测试分别保存在 `src/archive/` 和 `tests/archive/`，供迁移核对，不再注册编译目标。
 - 当前默认应用只有 `sentry`（需要 ROS2/sp_msgs）和三个 MPC 入口。测试和标定按目标显式构建，详见 [当前构建说明](../readme.md) 和 [测试索引](../tests/README.md)。
 

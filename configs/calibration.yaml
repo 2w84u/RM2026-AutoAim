@@ -1,6 +1,8 @@
-pattern_cols: 10
-pattern_rows: 7
-center_distance_mm: 40
+# checker 棋盘格：8 列 × 11 行方格，对应 7 列 × 10 行内角点。
+# pattern_cols / pattern_rows 均填写内角点数，不是方格数。
+pattern_cols: 7
+pattern_rows: 10
+center_distance_mm: 15  # 方格边长，也就是相邻内角点间距，单位 mm
 
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0,  0, 0, 1]
 
@@ -9,8 +11,6 @@ exposure_ms: 3
 gain: 10.0
 vid_pid: "2bdf:0001"
 
-#####-----cboard参数-----#####
-quaternion_canid: 0x01
-bullet_speed_canid: 0x110
-send_canid: 0xff
-can_interface: "can0"
+#####-----采集姿态：Gimbal AB 协议-----#####
+# 与 sentry.yaml 中云台串口一致，按实际设备填写；部署时使用稳定 udev 路径。
+com_port: "/dev/serial/by-id/usb-Zephyr_Project_SkyWalker_Vision_313336353233510B001A0012-if00"

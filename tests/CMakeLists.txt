@@ -12,6 +12,7 @@ add_manual_test(auto_aim_test vision/auto_aim_test.cpp auto_aim)
 add_manual_test(auto_buff_test vision/auto_buff_test.cpp auto_buff)
 
 add_manual_test(gimbal_test hardware/gimbal_test.cpp)
+add_manual_test(gimbal_feedback_test hardware/gimbal_feedback_test.cpp)
 add_manual_test(dm_test hardware/dm_test.cpp)
 
 add_manual_test(planner_test planning/planner_test.cpp auto_aim)

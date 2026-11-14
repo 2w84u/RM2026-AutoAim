@@ -97,6 +97,49 @@ Eigen::Quaterniond Gimbal::q(std::chrono::steady_clock::time_point t)
   return std::get<0>(b).normalized();
 }
 
+std::optional<Eigen::Quaterniond> Gimbal::try_q(
+  std::chrono::steady_clock::time_point t, std::chrono::milliseconds max_delta)
+{
+  const auto generation = serial_.generation();
+  if (!feedback_fresh() || max_delta < std::chrono::milliseconds::zero()) return std::nullopt;
+  std::lock_guard<std::mutex> lock(q_mutex_);
+
+  using Sample = std::tuple<Eigen::Quaterniond, std::chrono::steady_clock::time_point>;
+  const auto near = [&](const Sample & sample) {
+    const auto dt = t - std::get<1>(sample);
+    return dt >= -max_delta && dt <= max_delta;
+  };
+
+  Sample a{}, b{};
+  if (!queue_.try_front(b)) return std::nullopt;
+  std::optional<Eigen::Quaterniond> result;
+  if (t <= std::get<1>(b)) {
+    if (near(b)) result = std::get<0>(b);
+  } else {
+    bool bracketed = false;
+    while (queue_.try_pop_if_more_than_one(a)) {
+      if (!queue_.try_front(b)) return std::nullopt;
+      const auto ta = std::get<1>(a), tb = std::get<1>(b);
+      if (t <= tb) {
+        bracketed = true;
+        if (near(a) && near(b)) {
+          const double dt = std::chrono::duration<double>(tb - ta).count();
+          const double k = dt <= 0.0 ? 1.0 :
+            std::clamp(std::chrono::duration<double>(t - ta).count() / dt, 0.0, 1.0);
+          result = std::get<0>(a).slerp(k, std::get<0>(b));
+        }
+        break;
+      }
+    }
+    if (!bracketed && near(b)) result = std::get<0>(b);
+  }
+
+  if (!result || !result->coeffs().allFinite() || result->norm() < 1e-6 ||
+      !feedback_fresh() || generation != serial_.generation())
+    return std::nullopt;
+  return result->normalized();
+}
+
 void Gimbal::send(const io::Command & cmd) {
   send(cmd.control, cmd.shoot, cmd.yaw, 0, 0, cmd.pitch, 0, 0);
 }
