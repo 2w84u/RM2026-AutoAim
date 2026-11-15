@@ -1,18 +1,27 @@
 # 自瞄 MPC 实机可视化
 
 `auto_aim_debug_mpc` 使用真实相机、真实云台反馈、现有 YOLO / Solver / Tracker /
-弹道与 MPC 规划器。默认只接收云台串口，不发送控制或停控帧；显式传入
-`--enable-control` 时开启云台跟随。所有路径的开火位都固定关闭，不转发 IMU 或导航帧。
+弹道与 MPC 规划器。云台跟随默认开启；传入 `--enable-control=false` 时只接收云台串口，
+不发送控制或停控帧。所有路径的开火位都固定关闭，不转发 IMU 或导航帧。
 板端处于空闲模式时同样处理图像和上行姿态。
 
 在项目根目录运行；先关闭占用同一相机或云台串口的其他程序：
 
 ```bash
 cmake --build --preset default --target auto_aim_debug_mpc
-./build/auto_aim_debug_mpc configs/sentry.yaml
+./build/auto_aim_debug_mpc configs/sentry.yaml --enable-control=false
 ```
 
-开启真实云台跟随：
+NX 上使用 0708 TensorRT 模型（先按 [TensorRT 指南](../jetson_tensorrt.md) 构建）：
+
+```bash
+./build-trt/auto_aim_debug_mpc configs/jetson_trt.yaml --enable-control=false
+```
+
+TensorRT 构建在省略配置路径时也默认读取 `configs/jetson_trt.yaml`；其他构建默认读取
+`configs/sentry.yaml`。显式指定的配置路径始终优先。
+
+开启真实云台跟随（也可省略默认开启的开关）：
 
 ```bash
 ./build/auto_aim_debug_mpc configs/sentry.yaml --enable-control

@@ -87,7 +87,7 @@ cat <<EOF
   ssh $TARGET
   cd $REMOTE_DIR
   ./scripts/trt/build_engine.sh            # 首次：ONNX -> assets/0708_fp16.engine
-  cmake -S . -B build -DENABLE_TENSORRT=ON -DENABLE_OPENVINO=OFF
+  cmake -S . -B build
   cmake --build build -j\$(nproc)
   # ./build/standard_mpc configs/jetson.yaml（配置里 yolo_name: yolov5_trt）
 EOF

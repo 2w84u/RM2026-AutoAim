@@ -153,11 +153,16 @@ void draw(cv::Mat & img, const std::list<auto_aim::Armor> & armors)
     cv::rectangle(img, armor.box, {0, 255, 0}, 2);
     for (std::size_t i = 0; i < armor.points.size(); ++i) {
       cv::circle(img, armor.points[i], 3, {0, 0, 255}, -1);
+      cv::putText(
+        img, std::to_string(i),
+        {cvRound(armor.points[i].x) + 4, cvRound(armor.points[i].y) - 4},
+        cv::FONT_HERSHEY_SIMPLEX, 0.45, {0, 255, 255}, 1);
       if (armor.points.size() == 4)
         cv::line(
           img, armor.points[i], armor.points[(i + 1) % armor.points.size()], {0, 255, 255}, 1);
     }
-    const auto label = fmt::format("{} {:.2f}", armor_name(armor), armor.confidence);
+    const auto label = fmt::format(
+      "{} {} {:.2f}", auto_aim::COLORS[armor.color], armor_name(armor), armor.confidence);
     cv::putText(
       img, label, armor.box.tl() + cv::Point(0, -6), cv::FONT_HERSHEY_SIMPLEX, 0.6, {0, 255, 0}, 2);
   }
@@ -169,6 +174,7 @@ nlohmann::json to_json(const std::list<auto_aim::Armor> & armors)
   for (const auto & armor : armors) {
     nlohmann::json det;
     det["name"] = armor_name(armor);
+    det["color"] = auto_aim::COLORS[armor.color];
     det["confidence"] = armor.confidence;
     det["box"] = {armor.box.x, armor.box.y, armor.box.width, armor.box.height};
     nlohmann::json pts = nlohmann::json::array();
@@ -317,7 +323,7 @@ int main(int argc, char * argv[])
           timing.postprocessing_ms(), timing.nms_candidates);
       }
       for (const auto & a : armors) {
-        fmt::print(" | {}", armor_name(a));
+        fmt::print(" | {} {}", auto_aim::COLORS[a.color], armor_name(a));
         fmt::print(" c={:.2f} box=({},{},{},{})", a.confidence, a.box.x, a.box.y, a.box.width,
                    a.box.height);
         if (a.points.size() == 4)

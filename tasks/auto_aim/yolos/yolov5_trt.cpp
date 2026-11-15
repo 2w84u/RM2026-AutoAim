@@ -113,7 +113,13 @@ YOLOV5TRT::YOLOV5TRT(const std::string & config_path, bool debug)
     tools::logger()->warn(
       "[trt] yolov5_trt_model_path \"{}\" does not end with .engine", model_path_);
 
-  load_engine();
+  try {
+    load_engine();
+  } catch (...) {
+    // A failed constructor does not run ~YOLOV5TRT; release any CUDA allocations.
+    release();
+    throw;
+  }
   profiler_.context("YOLOV5TRT", fmt::format("TensorRT / {}", model_path_));
 
   tools::logger()->info(
@@ -229,7 +235,8 @@ void YOLOV5TRT::load_engine()
     throw std::runtime_error(
       fmt::format("[trt] Unsupported input data type {}", static_cast<int>(input_type_)));
 
-  if (output_dims_.nbDims != 3 || output_dims_.d[2] != 22)
+  if (output_dims_.nbDims != 3 || output_dims_.d[0] != 1 || output_dims_.d[1] <= 0 ||
+      output_dims_.d[2] != 22)
     throw std::runtime_error(
       fmt::format(
         "[trt] Unexpected output shape {} (want [1, N, 22] with 4 corners + confidence + "

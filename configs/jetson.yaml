@@ -2,7 +2,7 @@ enemy_color: "red"
 # enemy_color: "blue"
 
 #####-----神经网络参数-----#####
-# Jetson / CUDA DNN 示例配置：所有模型必须是 .onnx（OpenVINO IR .xml 需要 ENABLE_OPENVINO）
+# Jetson / CUDA DNN 示例配置：OpenVINO IR .xml 需要 CMake 检测并选择 OpenVINO
 yolo_name: yolo11
 classify_model: assets/tiny_resnet.onnx
 # 注意：best2-sim.onnx 的实际输出是 4 框 + 1 类 + 5 关键点（5x2=10 通道），
@@ -11,7 +11,7 @@ classify_model: assets/tiny_resnet.onnx
 yolo11_model_path: assets/yolo11_dnn.onnx
 yolov8_model_path: assets/yolov8.onnx
 yolov5_model_path: assets/yolov5.onnx
-# TensorRT 后端：需 -DENABLE_TENSORRT=ON 编译，并在 NX 上先执行 scripts/trt/build_engine.sh
+# TensorRT 后端：需本机已安装 TensorRT，并在 NX 上先执行 scripts/trt/build_engine.sh
 # 切换总后端只需把上面的 yolo_name 改成 yolov5_trt
 yolov5_trt_model_path: assets/0708_fp16.engine
 # GPU -> OpenCV DNN CUDA FP16；CPU -> OpenCV DNN CPU

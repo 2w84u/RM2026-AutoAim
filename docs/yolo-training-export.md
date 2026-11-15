@@ -161,10 +161,10 @@ device: GPU          # GPU -> OpenCV DNN CUDA FP16；CPU -> OpenCV DNN CPU
 class_num: 38        # 与训练类别数一致
 ```
 
-3. 编译（无需 OpenVINO）：
+3. 编译（CMake 自动选择已安装的 TensorRT 或 OpenVINO）：
 
 ```bash
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENVINO=OFF
+cmake -S . -B build
 cmake --build --preset default
 ```
 

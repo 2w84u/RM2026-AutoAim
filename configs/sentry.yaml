@@ -12,11 +12,11 @@ min_confidence: 0.8
 # 性能比较分别观察 forward 和 detect 总耗时；YOLOv8 输入较小且另有数字分类阶段。
 
 # 方案 1：YOLO11（当前默认），640×640，输出 1×50×8400，38 类 + 4 关键点。
-yolo_name: yolo11
-yolo11_model_path: assets/yolo11_dnn.onnx
-class_num: 38
+# yolo_name: yolo11
+# yolo11_model_path: assets/yolo11_dnn.onnx
+# class_num: 38
+# use_traditional: true
 # 保留当前配置；YOLO11 适配器不执行传统角点二次修正。
-use_traditional: true
 
 # 方案 2：YOLOv8，416×416，输出 1×14×3549，2 类 + 4 关键点。
 # 必须同时把 class_num 切为 2；此方案还会调用上面的 tiny_resnet 数字分类器。
@@ -30,6 +30,13 @@ use_traditional: true
 # yolo_name: yolov5
 # yolov5_model_path: assets/yolov5.onnx
 # use_traditional: false
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5_trt
+yolov5_trt_model_path: assets/0708_fp16.engine
+# yolov5_trt 使用固定的颜色与数字类别布局，不读取 class_num。
+class_num: 38
+use_traditional: true
 
 #####-----ROI-----#####
 roi:

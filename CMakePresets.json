@@ -8,15 +8,34 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "Default configuration",
-      "binaryDir": "${sourceDir}/build"
+      "displayName": "Debug (default)",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "default",
-      "displayName": "Default build (8 parallel jobs)",
+      "displayName": "Debug build (4 parallel jobs)",
       "configurePreset": "default",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "release",
+      "displayName": "Release build (8 parallel jobs)",
+      "configurePreset": "release",
+      "configuration": "Release",
       "jobs": 8
     }
   ]

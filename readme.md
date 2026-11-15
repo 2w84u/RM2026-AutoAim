@@ -28,19 +28,23 @@
 source /opt/ros/humble/setup.bash
 source ~/ros_ws/install/setup.bash
 
-cmake --preset default -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --preset default
 cmake --build --preset default
 ./build/sentry configs/sentry.yaml
 ```
 
-`default` 构建预设默认使用 **8 路并行**，要求 CMake 3.21 及以上；
-可通过 `--parallel N` 临时覆盖。预设复用 `build/`，不强制修改已有构建类型或编译选项。
-直接使用 `cmake --build build` 时不会读取预设；如需沿用该命令，
-可先在当前终端执行 `export CMAKE_BUILD_PARALLEL_LEVEL=8`。
+`default` 预设为 Debug，使用 `build/` 和 4 路并行；`release` 预设为 Release，使用
+独立的 `build-release/` 和 8 路并行。需要 CMake 3.21 及以上，可通过 `--parallel N`
+临时覆盖并行数。Release 可运行 `cmake --preset release`，随后运行
+`cmake --build --preset release`。
+
+VS Code CMake Tools 检测到 `CMakePresets.json` 时使用预设模式，不显示原来的
+“Select Variant”。在命令面板选择 **CMake: Select Configure Preset**，切换
+`Debug (default)` 或 `Release`，然后使用对应的 Build Preset 构建。
 
 默认应用共四个：`sentry`、`standard_mpc`、`auto_aim_debug_mpc`、`auto_buff_debug_mpc`。
 `auto_aim_debug_mpc` 是实机 GUI，可显示识别、跟踪、MPC 轨迹、原始姿态和期望姿态。
-默认仅接收反馈；`--enable-control` 开启云台跟随，始终不开火，见
+默认允许云台跟随；`--enable-control=false` 仅接收反馈，开火位始终关闭，见
 [自瞄 MPC 可视化说明](docs/debugging/auto-aim-mpc-gui.md)。
 云台动态响应调节使用独立的 `gimbal_mpc_response_test`，支持可调矩形轨迹、内置波形图和
 实测数据导出，见 [MPC 响应测试说明](docs/debugging/gimbal-mpc-response.md)。

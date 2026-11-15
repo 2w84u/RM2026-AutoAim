@@ -8,9 +8,8 @@
 
 #include <opencv2/opencv.hpp>
 
-// TensorRT only exists in the Jetson build (-DENABLE_TENSORRT=ON). Without it
-// this header stays empty so x86 hosts keep building the OpenVINO / OpenCV DNN
-// backends without CUDA headers.
+// CMake includes TensorRT only when it selects the installed TensorRT runtime.
+// Otherwise this header stays empty and does not require CUDA headers.
 #ifdef SPVISION_WITH_TENSORRT
 
 #include <NvInfer.h>

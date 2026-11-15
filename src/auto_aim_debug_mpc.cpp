@@ -33,7 +33,7 @@ using namespace std::chrono_literals;
 const std::string keys =
   "{help h usage ? |                     | 输出命令行参数说明}"
   "{@config-path   | configs/sentry.yaml | yaml 配置文件路径 }"
-  "{enable-control | true                | 开启云台跟随，始终不开火；默认仅显示 }"
+  "{enable-control | true                | 开启云台跟随，默认开启，始终不开火 }"
   "{detect-timing  | true                | 显示 detect 分段耗时及最近 60 帧统计 }";
 
 namespace

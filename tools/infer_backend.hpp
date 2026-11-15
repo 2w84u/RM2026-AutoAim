@@ -13,7 +13,7 @@ namespace tools
 // OpenCV DNN and TensorRT cannot load OpenVINO IR models. In this project the
 // file extension is the single switch between the two backends:
 //   *.onnx -> OpenCV DNN (CUDA when available)
-//   *.xml  -> OpenVINO IR (only when the build has ENABLE_OPENVINO)
+//   *.xml  -> OpenVINO IR (only when CMake selected OpenVINO)
 inline bool is_onnx_model(const std::string & path)
 {
   return path.size() > 5 && path.compare(path.size() - 5, 5, ".onnx") == 0;

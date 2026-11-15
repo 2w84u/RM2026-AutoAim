@@ -14,8 +14,8 @@ x86 上生成给 NX 用的 Engine**。
 |---|---|
 | `tasks/auto_aim/yolos/yolov5_trt.hpp/.cpp` | `YOLOV5TRT : public YOLOBase`，TensorRT 加载、推理、前后处理 |
 | `tasks/auto_aim/yolo.cpp` | 工厂新增 `yolo_name: yolov5_trt` |
-| `CMakeLists.txt` | 新增 `ENABLE_TENSORRT` 开关（默认 `OFF`）与依赖查找 |
-| `tasks/auto_aim/CMakeLists.txt` | 仅在开关打开时编译/链接 TensorRT 后端 |
+| `CMakeLists.txt` | 自动查找并选择 TensorRT 或 OpenVINO |
+| `tasks/auto_aim/CMakeLists.txt` | 选中 TensorRT 时编译/链接 TensorRT 后端 |
 | `scripts/trt/prepare_model.sh` | x86：下载并校验 `0708.onnx` |
 | `scripts/trt/build_engine.sh` | NX：`trtexec` 生成 `.engine`，默认 FP16 |
 | `scripts/trt/deploy_nx.sh` | x86：`rsync` 同步源码/模型/脚本到 NX |
@@ -85,31 +85,29 @@ cd ~/RM2026-AutoAim
 
 - `trtexec` 默认从 `PATH` 或 `/usr/src/tensorrt/bin/trtexec` 查找，可用
   `--trtexec <path>` 或环境变量 `TRTEXEC` 指定。
-- 实际执行的命令与 `trtexec` 日志分别打印到终端和 `assets/0708_fp16.build.log`。
+- 实际执行的命令与 `trtexec` 日志分别打印到终端和 `assets/0708_fp16.build.log`；
+  脚本使用 `--skipInference`，只构建 Engine，不使用 `trtexec` 的随机输入。
 - Engine 已存在且没有 `--force` 时直接跳过，**启动视觉程序不会重新转换**。
 - 转换失败会打印日志尾部并退出，ONNX 保持不变；不会退回 CPU 推理。
-- 自检：`trtexec --loadEngine=assets/0708_fp16.engine`
+- 用下方视觉程序和实拍图片或相机画面检查 Engine 加载及推理。
 
 ### 5. NX：编译
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-      -DENABLE_TENSORRT=ON \
-      -DENABLE_OPENVINO=OFF \
-      -DBUILD_TESTING=OFF
-cmake --build build --parallel 8
+cmake -S . -B build-trt
+cmake --build build-trt --parallel 4 --target standard_mpc auto_aim_debug_mpc detector_verify
 ```
 
-- `ENABLE_TENSORRT` 默认 `OFF`，x86 主机不需要（也不应该）打开。
-- 打开后 CMake 会查找 `NvInfer.h`、`libnvinfer` 与 CUDA Runtime；找不到会直接
-  `FATAL_ERROR` 并给出搜索路径，可用 `-DTENSORRT_ROOT=<prefix>` 指定安装前缀。
-- 其它模块（YOLOv8/YOLO11、auto_buff 等）的 OpenVINO 依赖仍由 `ENABLE_OPENVINO`
-  控制，关掉后它们只能加载 `.onnx`，行为与 [Jetson / CUDA DNN 构建说明](jetson-cuda-build.md)
-  一致。
+- CMake 自动查找 OpenVINO 和 TensorRT（`NvInfer.h`、`libnvinfer` 与 CUDA Toolkit）；
+  Jetson 上两者都存在时优先选择 TensorRT，其他平台优先选择 OpenVINO。只找到一个时使用
+  找到的后端，均不可用时配置报错。配置输出会显示最终选择。
+- 选中 TensorRT 时，其它模块（YOLOv8/YOLO11、auto_buff 等）的原有 ONNX 路径仍由
+  OpenCV DNN 处理；它们的 `.xml` 模型需要选中 OpenVINO。
 
 ### 6. NX：切换配置并运行
 
-`configs/jetson.yaml` 已经带好 `yolov5_trt_model_path`，把 `yolo_name` 一行改成：
+`configs/jetson_trt.yaml` 基于本机 `configs/sentry.yaml` 的相机、串口和标定参数，
+单独选择 TensorRT 后端，不改变原有配置：
 
 ```yaml
 yolo_name: yolov5_trt
@@ -117,10 +115,25 @@ yolov5_trt_model_path: assets/0708_fp16.engine
 ```
 
 ```bash
-./build/standard_mpc configs/jetson.yaml     # 或 auto_aim_debug_mpc 看可视化
+# 用已有实拍图片检查（结果保存在指定目录）
+./build-trt/detector_verify -c configs/jetson_trt.yaml \
+  -o out/detector_verify/trt-0708 /path/to/real-armor-image.png
+
+# 在桌面环境使用相机画面，按 q 退出；不会发送云台控制或开火指令
+./build-trt/detector_verify --camera -c configs/jetson_trt.yaml --save=false --show
+
+# 相机、串口和标定匹配时，用 MPC 可视化入口观察；显式关闭控制输出
+./build-trt/auto_aim_debug_mpc configs/jetson_trt.yaml --enable-control=false
 ```
 
-上实车前建议先关闭执行输出，只观察检测画面：四角点顺序、颜色、数字是否正确。
+检查相机参数、实际标定及串口与设备一致，并观察四角点、颜色和数字。
+`detector_verify` 的标注显示颜色和类别；角点编号 `0,1,2,3` 分别表示左上、右上、
+右下、左下。
+启用 TensorRT 编译的 `auto_aim_debug_mpc` 在省略配置路径时默认使用
+`configs/jetson_trt.yaml`；它的控制开关默认开启，仅观察时请显式传入
+`--enable-control=false`。
+`standard_mpc` 会与云台通信并使用独立的打符模型；使用前须按设备配置其他模块，
+且不能仅凭 `auto_fire: false` 认为云台控制输出已关闭。
 
 ## 后续启动
 
@@ -130,20 +143,26 @@ yolov5_trt_model_path: assets/0708_fp16.engine
 
 | 现象 | 原因 / 处理 |
 |---|---|
-| CMake: `ENABLE_TENSORRT=ON but TensorRT/CUDA was not found` | NX 上没装 TensorRT 或路径不同；确认 `/usr/include/aarch64-linux-gnu/NvInfer.h`，或用 `-DTENSORRT_ROOT` |
+| CMake: `No usable inference backend found` | 未找到可用的 OpenVINO 或完整的 TensorRT/CUDA 开发环境；检查报错中的头文件、库和 CUDA Toolkit 路径 |
 | 运行时报 `Cannot deserialize engine ...` | Engine 与当前 TensorRT 版本或 GPU 架构不匹配（例如从别的机器拷贝来的）；在 NX 上重新 `build_engine.sh --force` |
 | `Unexpected input shape [...]` | 不是 `0708.onnx` 生成的 Engine（要求 `[1,3,640,640]`）；重新转换 |
 | `Unexpected output shape [...]` | 输出需为 `[1,N,22]`（4 角点 + 置信度 + 4 颜色 + 9 数字）；说明用了别的检测头模型 |
 | `yolov5_trt_model_path is missing` | 配置里没写该字段，或改的是另一份 yaml |
-| `yolov5_trt needs a TensorRT build` | 二进制没有用 `-DENABLE_TENSORRT=ON` 编译 |
+| `yolov5_trt needs TensorRT` | CMake 没有选择 TensorRT；检查安装并重新配置和编译 |
 | `trtexec: command not found` | 用 `--trtexec /usr/src/tensorrt/bin/trtexec` |
 | 检测框位置整体偏移 | 检查 `use_roi` / `roi` 是否与相机分辨率匹配（与 OpenVINO 后端同一套配置） |
 | 置信度普遍偏低或框错乱 | 确认没有把居中 letterbox 或 114 填充引入预处理；本后端与 OpenVINO 版一样是左上角 + 黑边 |
 
-## 当前已验证 / 未验证
+## 设备差异
 
-- 已在本仓库完成：代码、工厂注册、CMake 开关、三个脚本、配置项。
-- **未在 x86 上编译**：本机没有 OpenCV/CUDA/TensorRT 开发环境，TensorRT 分支与
-  `-DENABLE_TENSORRT=ON` 的 CMake 配置尚未实际跑通。
-- **未在 NX 上验证**：Engine 构建、加载、FP16 输出解析、实际检测效果都需要接上 NX
-  后人工确认。
+Engine 与生成它的设备和 TensorRT 环境有关；更换设备或版本后应在目标 NX 上重新构建。
+实际检测效果、角点、颜色、数字和完整相机链路需要结合设备画面人工确认。
+
+2026-11-15 在本机 Jetson Orin NX（L4T 36.4.3、CUDA 12.6、TensorRT 10.3）已生成
+`assets/0708_fp16.engine`，并编译上述三个目标。Engine 的外部输入与输出均为 FP32，
+形状分别为 `[1,3,640,640]` 和 `[1,25200,22]`；FP16 表示允许内部层使用半精度，
+不意味着外部张量一定是 FP16。
+
+仓库本机已有的实拍装甲板图片检测出一个 `red sentry`，四角点顺序为左上、右上、右下、左下。
+海康相机已采集并处理 30 帧且正常退出；当时画面较暗，没有清晰的亮灯装甲板，未检出目标。
+仍需将相机对准实际目标，在桌面画面上确认颜色、数字、角点和 Solver 链路。

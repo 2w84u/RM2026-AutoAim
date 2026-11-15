@@ -26,8 +26,8 @@ std::unique_ptr<YOLOBase> create_season_detector(const std::string & config_path
     return std::make_unique<YOLOV5TRT>(config_path, debug);
 #else
     throw std::runtime_error(
-      "yolo_name: yolov5_trt needs a TensorRT build; configure with -DENABLE_TENSORRT=ON on the "
-      "Jetson (see docs/jetson_tensorrt.md)");
+      "yolo_name: yolov5_trt needs TensorRT; install TensorRT and CUDA, then rerun CMake "
+      "on the Jetson (see docs/jetson_tensorrt.md)");
 #endif
   }
   throw std::runtime_error("Unknown YOLO adapter: " + name);

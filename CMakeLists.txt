@@ -6,9 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENABLE_LEGACY_CBOARD "Build deprecated C-board CAN/UART transport" OFF)
 option(BUILD_TESTING "Build hardware-free contract tests with the default targets" OFF)
-option(ENABLE_OPENVINO "Enable OpenVINO IR (.xml) inference backend" ON)
 option(ENABLE_CUDA_DNN "Enable OpenCV DNN CUDA backend for ONNX models" ON)
-option(ENABLE_TENSORRT "Enable TensorRT (.engine) inference backend (Jetson only)" OFF)
 include(CTest)
 # Refresh CTest discovery even when BUILD_TESTING is switched off in an
 # existing build directory, so old test registrations cannot linger.
@@ -21,48 +19,79 @@ find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
-if(ENABLE_OPENVINO)
-  if(NOT OpenVINO_DIR AND EXISTS "/opt/intel/openvino_2024.6.0/runtime/cmake")
-    set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake")
-  endif()
-  find_package(OpenVINO QUIET COMPONENTS Runtime)
+# Select an installed inference runtime automatically. The old cache switches
+# are removed so reconfiguring an existing build uses the same discovery rules.
+unset(ENABLE_OPENVINO CACHE)
+unset(ENABLE_TENSORRT CACHE)
+
+file(GLOB _spvision_openvino_hints LIST_DIRECTORIES true
+  "/opt/intel/openvino*/runtime/cmake"
+  "/opt/intel/openvino*/cmake"
+  "/usr/local/lib/python*/dist-packages/openvino/cmake"
+  "/usr/local/lib/python*/site-packages/openvino/cmake"
+  "$ENV{HOME}/.local/lib/python*/site-packages/openvino/cmake")
+if(DEFINED ENV{VIRTUAL_ENV})
+  file(GLOB _spvision_venv_openvino_hints LIST_DIRECTORIES true
+    "$ENV{VIRTUAL_ENV}/lib/python*/site-packages/openvino/cmake")
+  list(APPEND _spvision_openvino_hints ${_spvision_venv_openvino_hints})
+endif()
+find_package(OpenVINO QUIET CONFIG COMPONENTS Runtime HINTS ${_spvision_openvino_hints})
+
+find_package(CUDAToolkit QUIET)
+if(TENSORRT_INCLUDE_DIR AND NOT EXISTS "${TENSORRT_INCLUDE_DIR}/NvInfer.h")
+  unset(TENSORRT_INCLUDE_DIR CACHE)
+endif()
+if(TENSORRT_LIBRARY AND NOT EXISTS "${TENSORRT_LIBRARY}")
+  unset(TENSORRT_LIBRARY CACHE)
+endif()
+set(_spvision_tensorrt_hints /usr/local/TensorRT /usr/local/tensorrt /opt/tensorrt)
+if(DEFINED ENV{TENSORRT_ROOT})
+  list(PREPEND _spvision_tensorrt_hints "$ENV{TENSORRT_ROOT}")
+endif()
+find_path(TENSORRT_INCLUDE_DIR NAMES NvInfer.h
+  HINTS "/usr/include/${CMAKE_LIBRARY_ARCHITECTURE}" /usr/include ${_spvision_tensorrt_hints}
+  PATH_SUFFIXES include "include/${CMAKE_LIBRARY_ARCHITECTURE}")
+find_library(TENSORRT_LIBRARY NAMES nvinfer
+  HINTS "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}" /usr/lib ${_spvision_tensorrt_hints}
+  PATH_SUFFIXES lib lib64 "lib/${CMAKE_LIBRARY_ARCHITECTURE}")
+
+set(_spvision_openvino_available OFF)
+if(OpenVINO_FOUND AND TARGET openvino::runtime)
+  set(_spvision_openvino_available ON)
+endif()
+set(_spvision_tensorrt_available OFF)
+if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND CUDAToolkit_FOUND AND TARGET CUDA::cudart)
+  set(_spvision_tensorrt_available ON)
 endif()
 
-if(ENABLE_OPENVINO AND OpenVINO_FOUND)
-  add_compile_definitions(SPVISION_WITH_OPENVINO)
-  message(STATUS "Inference backend: OpenVINO ${OpenVINO_VERSION} (.xml) + OpenCV DNN (.onnx)")
+set(SPVISION_USE_OPENVINO OFF)
+set(SPVISION_USE_TENSORRT OFF)
+if(EXISTS "/etc/nv_tegra_release" AND _spvision_tensorrt_available)
+  set(SPVISION_USE_TENSORRT ON)
+elseif(_spvision_openvino_available)
+  set(SPVISION_USE_OPENVINO ON)
+elseif(_spvision_tensorrt_available)
+  set(SPVISION_USE_TENSORRT ON)
 else()
-  message(STATUS "Inference backend: OpenCV DNN (.onnx) only")
+  message(FATAL_ERROR
+    "No usable inference backend found. Install OpenVINO Runtime or TensorRT development "
+    "files and the CUDA Toolkit, then configure again.\n"
+    "OpenVINO Runtime found: ${_spvision_openvino_available}; "
+    "NvInfer.h: '${TENSORRT_INCLUDE_DIR}'; libnvinfer: '${TENSORRT_LIBRARY}'; "
+    "CUDA Toolkit found: ${CUDAToolkit_FOUND}.")
+endif()
+
+if(SPVISION_USE_TENSORRT)
+  add_compile_definitions(SPVISION_WITH_TENSORRT)
+  message(STATUS "Inference backend: TensorRT (${TENSORRT_LIBRARY}) + CUDA ${CUDAToolkit_VERSION}")
+else()
+  add_compile_definitions(SPVISION_WITH_OPENVINO)
+  message(STATUS "Inference backend: OpenVINO ${OpenVINO_VERSION}")
 endif()
 
 if(ENABLE_CUDA_DNN)
   add_compile_definitions(SPVISION_WITH_CUDA_DNN)
   message(STATUS "OpenCV DNN CUDA enabled for device: GPU")
-endif()
-
-# TensorRT engines are built on the target Jetson and loaded from .engine files.
-# Only enabled explicitly: x86 hosts normally have neither NvInfer.h nor CUDA.
-set(TENSORRT_FOUND OFF)
-if(ENABLE_TENSORRT)
-  set(TENSORRT_ROOT "" CACHE PATH "TensorRT install prefix (JetPack: /usr)")
-  find_package(CUDAToolkit QUIET)
-  find_path(TENSORRT_INCLUDE_DIR NvInfer.h
-    HINTS "${TENSORRT_ROOT}/include" /usr/include /usr/include/aarch64-linux-gnu)
-  find_library(TENSORRT_LIBRARY nvinfer
-    HINTS "${TENSORRT_ROOT}/lib" /usr/lib /usr/lib/aarch64-linux-gnu)
-  if(TENSORRT_INCLUDE_DIR AND TENSORRT_LIBRARY AND CUDAToolkit_FOUND)
-    set(TENSORRT_FOUND ON)
-    add_compile_definitions(SPVISION_WITH_TENSORRT)
-    message(STATUS "Inference backend: TensorRT (${TENSORRT_LIBRARY}) + CUDA ${CUDAToolkit_VERSION}")
-  else()
-    message(FATAL_ERROR
-      "ENABLE_TENSORRT=ON but TensorRT/CUDA was not found "
-      "(NvInfer.h: '${TENSORRT_INCLUDE_DIR}', libnvinfer: '${TENSORRT_LIBRARY}', "
-      "CUDAToolkit_FOUND: '${CUDAToolkit_FOUND}').\n"
-      "On a Jetson check that JetPack ships TensorRT and that /usr/include/aarch64-linux-gnu/NvInfer.h "
-      "and /usr/lib/aarch64-linux-gnu/libnvinfer.so exist; set -DTENSORRT_ROOT=<prefix> if they live "
-      "elsewhere. On an x86 host omit -DENABLE_TENSORRT (engines built here are not portable to Jetson).")
-  endif()
 endif()
 
 # All ROS consumers use the same dependency check, including geometry_msgs.

@@ -20,7 +20,7 @@ add_library(auto_aim OBJECT
     planner/planner.cpp
 )
 
-if(ENABLE_TENSORRT AND TENSORRT_FOUND)
+if(SPVISION_USE_TENSORRT)
   target_sources(auto_aim PRIVATE yolos/yolov5_trt.cpp)
 endif()
 
@@ -28,13 +28,13 @@ if(ENABLE_LEGACY_CBOARD)
   target_sources(auto_aim PRIVATE multithread/commandgener.cpp)
 endif()
 
-if(ENABLE_OPENVINO AND OpenVINO_FOUND)
+if(SPVISION_USE_OPENVINO)
   target_link_libraries(auto_aim io openvino::runtime tinympcstatic)
 else()
   target_link_libraries(auto_aim io tinympcstatic)
 endif()
 
-if(ENABLE_TENSORRT AND TENSORRT_FOUND)
+if(SPVISION_USE_TENSORRT)
   target_include_directories(auto_aim PRIVATE ${TENSORRT_INCLUDE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
   target_link_libraries(auto_aim ${TENSORRT_LIBRARY} CUDA::cudart)
 endif()

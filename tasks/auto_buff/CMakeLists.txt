@@ -10,7 +10,7 @@ add_library(auto_buff OBJECT
     yolo11_buff.cpp
 )
 
-if(ENABLE_OPENVINO AND OpenVINO_FOUND)
+if(SPVISION_USE_OPENVINO)
   target_link_libraries(auto_buff auto_aim openvino::runtime ${CERES_LIBRARIES})
 else()
   target_link_libraries(auto_buff auto_aim ${CERES_LIBRARIES})

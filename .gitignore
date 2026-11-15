@@ -24,5 +24,5 @@ out/ir2onnx/*.onnx
 
 # TensorRT：Engine 与构建日志只在本机构建，不随仓库分发
 assets/*.engine
-assets/*.engine.build.log
+assets/*.build.log
 assets/*.onnx.download.txt

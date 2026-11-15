@@ -62,13 +62,18 @@ log "trtexec: $TRTEXEC"
 
 if [[ -s "$ENGINE" && "$FORCE" != "1" ]]; then
   log "已存在 $ENGINE，跳过转换（--force 可重建）"
-  log "自检：$TRTEXEC --loadEngine=$ENGINE"
+  log "使用视觉程序与真实图片或相机画面检查 Engine"
   exit 0
 fi
 
+# trtexec 默认会生成随机输入并运行性能测试。构建时只生成 Engine，实际推理使用真实画面。
+help_output="$("$TRTEXEC" --help 2>&1)" || die "无法读取 trtexec --help"
+[[ "$help_output" == *--skipInference* ]] || \
+  die "当前 trtexec 不支持 --skipInference，无法在不生成随机输入的情况下构建 Engine"
+
 mkdir -p "$(dirname "$ENGINE")"
 log_file="${ENGINE%.engine}.build.log"
-args=(--onnx="$ONNX" --saveEngine="$ENGINE")
+args=(--onnx="$ONNX" --saveEngine="$ENGINE" --skipInference)
 [[ "$PRECISION" == "fp16" ]] && args+=(--fp16)
 
 log "执行：$TRTEXEC ${args[*]}"
@@ -81,5 +86,5 @@ fi
 
 [[ -s "$ENGINE" ]] || die "trtexec 返回成功但没有生成 $ENGINE"
 log "生成成功：$ENGINE ($(wc -c <"$ENGINE") bytes)"
-log "自检：$TRTEXEC --loadEngine=$ENGINE"
+log "使用视觉程序与真实图片或相机画面检查 Engine"
 log "下一步：配置 yolo_name: yolov5_trt，yolov5_trt_model_path: ${ENGINE#$REPO_ROOT/}，然后编译并运行视觉程序"
