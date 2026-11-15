@@ -1,4 +1,4 @@
-# RM2026-AutoAim
+# RM2027-AutoAim
 
 当前默认构建哨兵及 MPC 版本，通信使用 `io/gimbal/` 的 AB 串口协议。
 上游算法介绍保存在 [docs/upstream-guide.md](docs/upstream-guide.md)。
