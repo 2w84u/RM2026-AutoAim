@@ -1,9 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
 
-set(OpenVINO_DIR "/opt/intel/openvino_2024.6.0/runtime/cmake")
-
-find_package(OpenVINO REQUIRED COMPONENTS Runtime)
-
 add_subdirectory(planner/tinympc)
 
 add_library(auto_aim OBJECT 
@@ -20,9 +16,25 @@ add_library(auto_aim OBJECT
     yolos/yolov5.cpp
     yolos/yolov8.cpp
     yolos/yolo11.cpp
-    multithread/commandgener.cpp
     multithread/mt_detector.cpp
     planner/planner.cpp
 )
 
-target_link_libraries(auto_aim io openvino::runtime tinympcstatic)
+if(SPVISION_USE_TENSORRT)
+  target_sources(auto_aim PRIVATE yolos/yolov5_trt.cpp)
+endif()
+
+if(ENABLE_LEGACY_CBOARD)
+  target_sources(auto_aim PRIVATE multithread/commandgener.cpp)
+endif()
+
+if(SPVISION_USE_OPENVINO)
+  target_link_libraries(auto_aim io openvino::runtime tinympcstatic)
+else()
+  target_link_libraries(auto_aim io tinympcstatic)
+endif()
+
+if(SPVISION_USE_TENSORRT)
+  target_include_directories(auto_aim PRIVATE ${TENSORRT_INCLUDE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
+  target_link_libraries(auto_aim ${TENSORRT_LIBRARY} CUDA::cudart)
+endif()

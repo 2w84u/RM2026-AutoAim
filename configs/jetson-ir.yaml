@@ -1,0 +1,63 @@
+enemy_color: "red"
+# enemy_color: "blue"
+
+#####-----神经网络参数-----#####
+# IR 反向转换模型的 Jetson / CUDA DNN 配置，转换方法见 docs/ir-to-onnx.md
+yolo_name: yolo11
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11_dnn.onnx
+yolov8_model_path: assets/yolov8.onnx
+yolov5_model_path: assets/yolov5.onnx
+# GPU -> OpenCV DNN CUDA FP16；CPU -> OpenCV DNN CPU
+device: GPU
+# yolo11.xml 转换产物：(1, 50, 8400) = 4 + 38 类 + 8 关键点
+# 切换到 yolov8 时必须同时改为 class_num: 2；yolov5 使用固定旧格式解析。
+class_num: 38
+min_confidence: 0.8
+use_traditional: true
+
+#####-----ROI-----#####
+roi:
+  x: 420
+  y: 50
+  width: 600
+  height: 600
+
+use_roi: false
+
+#####-----传统方法参数-----#####
+threshold: 150
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+min_confidence: 0.8
+
+#####-----tracker参数-----#####
+min_detect_count: 5
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 75
+
+#####-----aimer参数-----#####
+yaw_offset: -2 # degree -2.5
+pitch_offset: 0 # degree 2
+comming_angle: 60 # degree
+leaving_angle: 20 # degree
+decision_speed: 8 # rad/s
+high_speed_delay_time: 0.015 # s
+low_speed_delay_time: 0.015 # s
+
+#####-----shooter参数-----#####
+first_tolerance: 3 # 近距离射击容差，degree
+second_tolerance: 2 # 远距离射击容差，degree
+judge_distance: 2 #距离判断阈值
+auto_fire: true # 是否由自瞄控制射击
+
+camera_name: "hikrobot"
+exposure_ms: 2
+gain: 16
+vid_pid: "2bdf:0001"

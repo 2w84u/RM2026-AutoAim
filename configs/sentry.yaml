@@ -2,34 +2,60 @@ enemy_color: "red"
 # enemy_color: "blue"
 
 #####-----神经网络参数-----#####
-yolo_name: yolov5
+# 公共参数：三个方案均使用 ONNX + OpenCV DNN，device: GPU 请求 CUDA FP16。
 classify_model: assets/tiny_resnet.onnx
-yolo11_model_path: assets/yolo11.xml
-yolov8_model_path: assets/yolov8.xml
-yolov5_model_path: assets/yolov5.xml
-device: CPU
+device: GPU
 min_confidence: 0.8
+
+# 切换时先注释当前方案的整块配置，再取消另一个方案的整块注释，然后重启程序。
+# 只启用一个方案，避免重复的 yolo_name / class_num；输入尺寸由对应适配器固定。
+# 性能比较分别观察 forward 和 detect 总耗时；YOLOv8 输入较小且另有数字分类阶段。
+
+# 方案 1：YOLO11（当前默认），640×640，输出 1×50×8400，38 类 + 4 关键点。
+# yolo_name: yolo11
+# yolo11_model_path: assets/yolo11_dnn.onnx
+# class_num: 38
+# use_traditional: true
+# 保留当前配置；YOLO11 适配器不执行传统角点二次修正。
+
+# 方案 2：YOLOv8，416×416，输出 1×14×3549，2 类 + 4 关键点。
+# 必须同时把 class_num 切为 2；此方案还会调用上面的 tiny_resnet 数字分类器。
+# yolo_name: yolov8
+# yolov8_model_path: assets/yolov8.onnx
+# class_num: 2
+
+# 方案 3：YOLOv5，640×640，输出 1×25200×22，旧版固定列布局。
+# 该适配器不读取 class_num；先关闭传统角点二次修正，便于对比模型与解码耗时。
+# 需要比较传统修正开销时，可将本方案的 use_traditional 改为 true。
+# yolo_name: yolov5
+# yolov5_model_path: assets/yolov5.onnx
+# use_traditional: false
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5_trt
+yolov5_trt_model_path: assets/0708_fp16.engine
+# yolov5_trt 使用固定的颜色与数字类别布局，不读取 class_num。
+class_num: 38
 use_traditional: true
 
 #####-----ROI-----#####
-roi: 
+roi:
   x: 420
   y: 50
   width: 600
   height: 600
-
 use_roi: false
 
 #####-----传统方法参数-----#####
 threshold: 150
-max_angle_error: 45 # degree
+max_angle_error: 45
 min_lightbar_ratio: 1.5
 max_lightbar_ratio: 20
 min_lightbar_length: 8
 min_armor_ratio: 1
 max_armor_ratio: 5
 max_side_ratio: 1.5
-max_rectangular_error: 25 # degree
+max_rectangular_error: 25
 
 #####-----tracker参数-----#####
 min_detect_count: 5
@@ -37,68 +63,58 @@ max_temp_lost_count: 15
 outpost_max_temp_lost_count: 75
 
 #####-----aimer参数-----#####
-yaw_offset: 1.6 # degree -2.5
-pitch_offset: 11.4 # degree 2
+yaw_offset: 0 # degree
+pitch_offset: 0    # degree
 comming_angle: 55 # degree
 leaving_angle: 20 # degree
 decision_speed: 7 # rad/s
 high_speed_delay_time: 0.0 # s
-low_speed_delay_time: 0.0 # s planner use this value
+low_speed_delay_time: 0.0 # s
 
 #####-----shooter参数-----#####
-first_tolerance: 3 # 近距离射击容差，degree
-second_tolerance: 2 # 远距离射击容差，degree
-judge_distance: 2 #距离判断阈值
-auto_fire: true # 是否由自瞄控制射击
+first_tolerance: 3 # degree
+second_tolerance: 2 # degree
+judge_distance: 2 # m
+auto_fire: true
 
+#####-----相机参数-----#####
 camera_name: "hikrobot"
 exposure_ms: 2.5
 gain: 16.9
 vid_pid: "2bdf:0001"
-
-#  1  0  0
-#  0  1  0
-#  0  0  1
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
 
-# 重投影误差: 0.1820px
-camera_matrix: [1785.4881526822305, 0, 672.4806478241826, 0, 1785.026019470562, 559.89603224794314, 0, 0, 1]
-distort_coeffs: [-0.076005079619881746, 0.11182817466388446, 0.0005362204787722057, -0.0027546300984895122, 0]
+# 相机内参：170 张实拍，1440×1080，7×10 内角点，间距 15 mm
+# 重投影误差：平均 0.294600 px；RMS 0.383416 px
+camera_matrix: [1729.0855739319745, 0, 741.38202596121118, 0, 1728.5102893787657, 600.05123428260288, 0, 0, 1]
+distort_coeffs: [-0.11079760890622181, 0.11251270774747622, 0.0059610783314074881, 0.0048966800385297571, 0]
 
-# 相机同理想情况的偏角: yaw1.44 pitch-7.28 roll0.96 degree
-# 标定板到世界坐标系原点的水平距离: 1.13 m
-# 标定板同竖直摆放时的偏角: yaw7.61 pitch13.92 roll-0.46 degree
-R_camera2gimbal: [-0.027182119030230909, -0.12616154330853446, 0.99163723074269183, -0.99949106557517331, 0.019998323121329122, -0.024853106601381177, -0.016695575474690555, -0.99180811252093692, -0.12664093215554434]
-t_camera2gimbal: [0.13160669975045827, 0.10377721766577375, 0.024908271912914642]
-
-#####-----cboard参数-----#####
-quaternion_canid: 0x100
-bullet_speed_canid: 0x101
-send_canid: 0xff
-can_interface: "can0"
+# 暂用手眼外参：assets/img_with_q2，143 组，calibrate_handeye
+# 来源：out/calibration/img_with_q2_handeye.yaml；平移单位 m
+# 相机同理想情况的偏角：yaw -1.74 / pitch -6.38 / roll 1.61 degree
+R_camera2gimbal: [0.027280750020161282, -0.11190688945247157, 0.9933441542443433, -0.99923761863919514, 0.02470937735320744, 0.030226282720295032, -0.027927444827765414, -0.99341144283921401, -0.11114748337908065]
+t_camera2gimbal: [0.1676905700520738, 0.064243414188492484, 0.030404753816238167]
 
 #####-----gimbal参数-----#####
-# com_port: "/dev/ttyUSB0"
-com_port: "/dev/ttyUSB0"
+com_port: "/dev/serial/by-id/usb-Zephyr_Project_SkyWalker_Vision_313336353233510B001A0012-if00"
+nav_com_port: "/dev/ttyUSB1"
 yaw_kp: 0
 yaw_kd: 0
 pitch_kp: 0
 pitch_kd: 0
 
-#####-----planner-----#####
+#####-----planner参数-----#####
+# MPC 弹速反馈无效时读取此值，m/s；沿用原规划器的 22 m/s。
+default_bullet_speed: 22.0
 fire_thresh: 0.0035
-
 max_yaw_acc: 50
 Q_yaw: [9e6, 0]
 R_yaw: [1]
-
 max_pitch_acc: 100
 Q_pitch: [9e6, 0]
 R_pitch: [1]
 
-#####-----buff_detector参数-----#####
+#####-----buff参数-----#####
 model: "assets/yolo11_buff_int8.xml"
-
-#####-----buff_aimer参数-----#####
-fire_gap_time: 0.700   # s
-predict_time: 0.120     # s
+fire_gap_time: 0.700
+predict_time: 0.120

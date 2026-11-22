@@ -1,16 +1,27 @@
-pattern_cols: 10
-pattern_rows: 7
-center_distance_mm: 40
+# checker 棋盘格：8 列 × 11 行方格，对应 7 列 × 10 行内角点。
+# pattern_cols / pattern_rows 均填写内角点数，不是方格数。
+pattern_cols: 7
+pattern_rows: 10
+center_distance_mm: 15  # 方格边长，也就是相邻内角点间距，单位 mm
 
 R_gimbal2imubody: [1, 0, 0, 0, 1, 0,  0, 0, 1]
 
 camera_name: "hikrobot"
-exposure_ms: 3
-gain: 10.0
+exposure_ms: 5
+gain: 30
 vid_pid: "2bdf:0001"
 
-#####-----cboard参数-----#####
-quaternion_canid: 0x01
-bullet_speed_canid: 0x110
-send_canid: 0xff
-can_interface: "can0"
+#####-----采集姿态：Gimbal AB 协议-----#####
+# 与 sentry.yaml 中云台串口一致，按实际设备填写；部署时使用稳定 udev 路径。
+com_port: "/dev/serial/by-id/usb-Zephyr_Project_SkyWalker_Vision_313336353233510B001A0012-if00"
+
+# 相机内参标定：170 张实拍，1440×1080，7×10 内角点，间距 15 mm
+# 重投影误差: 0.294600px（平均）；RMS: 0.383416px
+camera_matrix: [1729.0855739319745, 0, 741.38202596121118, 0, 1728.5102893787657, 600.05123428260288, 0, 0, 1]
+distort_coeffs: [-0.11079760890622181, 0.11251270774747622, 0.0059610783314074881, 0.0048966800385297571, 0]
+
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+# 相机同理想情况的偏角: yaw-1.74 pitch-6.38 roll1.61 degree
+R_camera2gimbal: [0.027280750020161282, -0.11190688945247157, 0.9933441542443433, -0.99923761863919514, 0.02470937735320744, 0.030226282720295032, -0.027927444827765414, -0.99341144283921401, -0.11114748337908065]
+t_camera2gimbal: [0.1676905700520738, 0.064243414188492484, 0.030404753816238167]

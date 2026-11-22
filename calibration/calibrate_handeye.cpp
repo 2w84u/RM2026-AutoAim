@@ -2,16 +2,20 @@
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>  // 必须在opencv2/core/eigen.hpp上面
+#include <cstdio>
 #include <fstream>
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/opencv.hpp>
+#include <stdexcept>
 
+#include "calibration/chessboard.hpp"
 #include "tools/img_tools.hpp"
 #include "tools/math_tools.hpp"
 
 const std::string keys =
   "{help h usage ? |                          | 输出命令行参数说明}"
   "{config-path c  | configs/calibration.yaml | yaml配置文件路径 }"
+  "{no-display     | false                    | 批量处理，不显示图片或等待按键 }"
   "{@input-folder  | assets/img_with_q        | 输入文件夹路径   }";
 
 std::vector<cv::Point3f> centers_3d(const cv::Size & pattern_size, const float center_distance)
@@ -29,7 +33,8 @@ Eigen::Quaterniond read_q(const std::string & q_path)
 {
   std::ifstream q_file(q_path);
   double w, x, y, z;
-  q_file >> w >> x >> y >> z;
+  if (!(q_file >> w >> x >> y >> z))
+    throw std::runtime_error("无法读取配套四元数：" + q_path);
   return {w, x, y, z};
 }
 
@@ -37,7 +42,7 @@ void load(
   const std::string & input_folder, const std::string & config_path,
   std::vector<double> & R_gimbal2imubody_data, std::vector<cv::Mat> & R_gimbal2world_list,
   std::vector<cv::Mat> & t_gimbal2world_list, std::vector<cv::Mat> & rvecs,
-  std::vector<cv::Mat> & tvecs)
+  std::vector<cv::Mat> & tvecs, bool display)
 {
   // 读取yaml参数
   auto yaml = YAML::LoadFile(config_path);
@@ -58,33 +63,33 @@ void load(
     auto img_path = fmt::format("{}/{}.jpg", input_folder, i);
     auto q_path = fmt::format("{}/{}.txt", input_folder, i);
     auto img = cv::imread(img_path);
-    Eigen::Quaterniond q = read_q(q_path);
     if (img.empty()) break;
+    Eigen::Quaterniond q = read_q(q_path);
 
     // 计算云台的欧拉角
     Eigen::Matrix3d R_imubody2imuabs = q.toRotationMatrix();
     Eigen::Matrix3d R_gimbal2world =
       R_gimbal2imubody.transpose() * R_imubody2imuabs * R_gimbal2imubody;
-    Eigen::Vector3d ypr = tools::eulers(R_gimbal2world, 2, 1, 0) * 57.3;  // degree
-
-    // 在图片上显示云台的欧拉角，用来检验R_gimbal2imubody是否正确
-    auto drawing = img.clone();
-    tools::draw_text(drawing, fmt::format("yaw   {:.2f}", ypr[0]), {40, 40}, {0, 0, 255});
-    tools::draw_text(drawing, fmt::format("pitch {:.2f}", ypr[1]), {40, 80}, {0, 0, 255});
-    tools::draw_text(drawing, fmt::format("roll  {:.2f}", ypr[2]), {40, 120}, {0, 0, 255});
 
     // 识别标定板
     std::vector<cv::Point2f> centers_2d;
-    auto success = cv::findCirclesGrid(img, pattern_size, centers_2d);  // 默认是对称圆点图案
+    auto success = calibration::find_chessboard_corners(img, pattern_size, centers_2d);
 
-    // 显示识别结果
-    cv::drawChessboardCorners(drawing, pattern_size, centers_2d, success);
-    cv::resize(drawing, drawing, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
-    cv::imshow("Press any to continue", drawing);
-    cv::waitKey(0);
+    if (display) {
+      const Eigen::Vector3d ypr = tools::eulers(R_gimbal2world, 2, 1, 0) * 57.3;
+      auto drawing = img.clone();
+      tools::draw_text(drawing, fmt::format("yaw   {:.2f}", ypr[0]), {40, 40}, {0, 0, 255});
+      tools::draw_text(drawing, fmt::format("pitch {:.2f}", ypr[1]), {40, 80}, {0, 0, 255});
+      tools::draw_text(drawing, fmt::format("roll  {:.2f}", ypr[2]), {40, 120}, {0, 0, 255});
+      cv::drawChessboardCorners(drawing, pattern_size, centers_2d, success);
+      cv::resize(drawing, drawing, {}, 0.5, 0.5);
+      cv::imshow("Press any to continue", drawing);
+      cv::waitKey(0);
+    }
 
     // 输出识别结果
     fmt::print("[{}] {}\n", success ? "success" : "failure", img_path);
+    std::fflush(stdout);
     if (!success) continue;
 
     // 计算所需的数据
@@ -102,6 +107,8 @@ void load(
     rvecs.emplace_back(rvec);
     tvecs.emplace_back(tvec);
   }
+  fmt::print("已加载 {} 组实拍图片与姿态，开始手眼求解\n", rvecs.size());
+  std::fflush(stdout);
 }
 
 void print_yaml(
@@ -141,6 +148,7 @@ int main(int argc, char * argv[])
   }
   auto input_folder = cli.get<std::string>(0);
   auto config_path = cli.get<std::string>("config-path");
+  const bool display = !cli.get<bool>("no-display");
 
   // 从输入文件夹中加载标定所需的数据
   std::vector<double> R_gimbal2imubody_data;
@@ -148,7 +156,7 @@ int main(int argc, char * argv[])
   std::vector<cv::Mat> rvecs, tvecs;
   load(
     input_folder, config_path, R_gimbal2imubody_data, R_gimbal2world_list, t_gimbal2world_list,
-    rvecs, tvecs);
+    rvecs, tvecs, display);
 
   // 手眼标定
   cv::Mat R_camera2gimbal, t_camera2gimbal;

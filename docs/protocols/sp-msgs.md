@@ -24,8 +24,8 @@ int8[] invincible_enemy_ids        # 不可破坏敌人的ID数组
 ```
 
 **使用位置**:
-- [io/ros2/subscribe2nav.cpp](io/ros2/subscribe2nav.cpp#L16) - 订阅敌人状态
-- [tests/topic_loop_test.cpp](tests/topic_loop_test.cpp#L14) - 测试发布敌人状态
+- [io/ros2/subscribe2nav.cpp](../../io/ros2/subscribe2nav.cpp#L16) - 订阅敌人状态
+- [tests/ros2/topic_loop_test.cpp](../../tests/ros2/topic_loop_test.cpp#L14) - 测试发布敌人状态
 
 **访问字段示例**:
 ```cpp
@@ -46,7 +46,7 @@ int8[] target_ids                  # 目标ID数组
 ```
 
 **使用位置**:
-- [io/ros2/subscribe2nav.cpp](io/ros2/subscribe2nav.cpp#L20) - 订阅自瞄目标
+- [io/ros2/subscribe2nav.cpp](../../io/ros2/subscribe2nav.cpp#L20) - 订阅自瞄目标
 
 **访问字段示例**:
 ```cpp
@@ -97,4 +97,5 @@ sp_msgs::msg::AutoaimTargetMsg target_msg;
 
 ## 集成说明
 
-sp_msgs包已添加到主项目的CMakeLists.txt中，作为首个构建子目录，以确保其他模块可以正确引用这些消息定义。
+`sp_msgs` 是单独构建的 ROS2 消息包。主项目通过 `find_package(sp_msgs)` 查找已安装的包，
+不会自动构建它。请先在 ROS2 工作空间中编译并 source 对应的 `install/setup.bash`，再配置主项目。

@@ -1,0 +1,61 @@
+{
+  "xml": "assets/yolo11_buff_int8.xml",
+  "onnx": "assets/yolo11_buff_int8.onnx",
+  "fq": "drop",
+  "input": "assets/standard_fanblade.jpg",
+  "input_shape": [
+    1,
+    3,
+    640,
+    640
+  ],
+  "versions": {
+    "numpy": "1.26.4",
+    "openvino": "2024.6.0-17404-4c0f47d2335-releases/2024/6",
+    "onnxruntime": "1.20.1",
+    "opencv": "4.10.0"
+  },
+  "ir_vs_ort": [
+    {
+      "shape": [
+        1,
+        17,
+        8400
+      ],
+      "max_abs": 129.25213623046875,
+      "mean_abs": 2.9082792925999925
+    }
+  ],
+  "ort_vs_opencv": [
+    {
+      "shape": [
+        1,
+        17,
+        8400
+      ],
+      "max_abs": 0.00286865234375,
+      "mean_abs": 3.1944068077067934e-05
+    }
+  ],
+  "accuracy_validated": false,
+  "checks": {
+    "shape_and_finite": true,
+    "opencv_forward": true,
+    "ir_close_to_ort": false,
+    "opencv_close_to_ort": true,
+    "ir_without_fq_close_to_ort": true
+  },
+  "ir_without_fq_vs_ort": [
+    {
+      "shape": [
+        1,
+        17,
+        8400
+      ],
+      "max_abs": 0.00579833984375,
+      "mean_abs": 2.8017487910546122e-05
+    }
+  ],
+  "validation_passed": true,
+  "note": "单输入的数值和加载检查不代表检测精度验证；原始 INT8 IR 的内核舍入及融合可能与展开的浮点 FQ 不同。"
+}
